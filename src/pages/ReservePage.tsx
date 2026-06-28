@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import type { ReservationPage, ReservedItem, CreateReservationResult } from '../lib/types';
+import type { ReservationPage, ReservedItem, CreateReservationResult, PageItem } from '../lib/types';
 import { getReservationPage, createReservation, cancelReservation } from '../lib/api';
 import { getInstallId } from '../lib/installId';
 import { yen } from '../lib/format';
@@ -37,7 +37,13 @@ export function ReservePage() {
     return () => { alive = false; };
   }, [slug]);
 
-  const items = page?.items ?? [];
+  // 並び順は従来（レジさぽっ！本体）と同じく「セット（bundle）を上・単品（product）を下」。
+  // 同種内は公開時の順序を維持する（安定ソート）。selected・完了画面の内訳もこの順に従う。
+  const items = useMemo<PageItem[]>(() => {
+    const raw = page?.items ?? [];
+    const rank = (k: PageItem['kind']) => (k === 'bundle' ? 0 : 1);
+    return [...raw].sort((a, b) => rank(a.kind) - rank(b.kind));
+  }, [page]);
 
   const selected: ReservedItem[] = useMemo(
     () =>
