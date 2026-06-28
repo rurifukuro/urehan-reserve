@@ -1,0 +1,54 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # vite.config は VITE_* を .env（loadEnv）から読む。.env は gitignore のため CI で再生成する。
+      # anon(publishable) キーは RLS 前提の公開安全値（service_role ではない）。
+      - name: Create build env
+        run: |
+          cat > .env <<'EOF'
+          VITE_SUPABASE_URL=https://vuazrgebojcnyjcnhpuq.supabase.co
+          VITE_SUPABASE_ANON_KEY=sb_publishable_pin4V9zyMx6el2Z_fswzUA_dXlom2jf
+          VITE_BASE_PATH=/urehan-reserve/
+          EOF
+
+      - run: npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
