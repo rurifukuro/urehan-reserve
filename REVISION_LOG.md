@@ -9,6 +9,21 @@
 
 ---
 
+## Rev3 — 自動〆切（close_at）超過時に「受付終了」を表示（2026-06-28）
+
+売り手が設定した自動〆切（`close_at`・migration 0020）の定刻を過ぎたら、買い手の予約フォームを出さず
+「受付は締め切られています」を表示する。**サーバーも `create_reservation` で同条件を弾く**ので二重の安全。
+ここは押す前に受付終了を見せる**表示用ガード**（押してエラーになる前にUIで止める）。
+
+- `types.ts`: `ReservationPage` に `close_at: number | null` を追加（get_reservation_page が返す列・0020）。
+- `api.ts`: `close_at` を数値へ正規化（PostgREST が bigint を文字列で返す場合に備える・不正値は null）。
+- `ReservePage.tsx`: `closed = !is_open || (close_at != null && now >= close_at)` を導入。手動締切と自動〆切超過を
+  まとめて「受付締切」ボックス表示に分岐（従来は `!is_open` だけ判定していた）。
+
+### 動作確認
+- `npx tsc --noEmit -p tsconfig.app.json` 通過（EXIT=0）。
+- ⚠ **デプロイ（GitHub Pages 再公開）は未実施＝ユーザー承認待ち（WEB9: Web公開は許可制）。**
+
 ## Rev2 — 公開お品書きの並び順を「セット上・単品下」に統一（2026-06-28）
 
 レジさぽっ！本体 Rev6 と同じ並びへ揃えた。`ReservePage` で表示用 `items` を安定ソートする

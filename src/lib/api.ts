@@ -9,10 +9,13 @@ export async function getReservationPage(slug: string): Promise<ReservationPage 
   const rows = (data ?? []) as ReservationPage[];
   const row = rows[0];
   if (!row) return null;
+  // close_at は bigint（migration 0020）。PostgREST が文字列で返す場合に備えて数値へ正規化（不正値は null）。
+  const closeAt = row.close_at == null ? null : Number(row.close_at);
   return {
     ...row,
     items: Array.isArray(row.items) ? row.items : [],
     oshinagaki_urls: Array.isArray(row.oshinagaki_urls) ? row.oshinagaki_urls : [],
+    close_at: closeAt != null && Number.isFinite(closeAt) ? closeAt : null,
   };
 }
 

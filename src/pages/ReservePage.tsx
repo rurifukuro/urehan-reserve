@@ -54,6 +54,10 @@ export function ReservePage() {
   );
   const total = useMemo(() => selected.reduce((s, it) => s + it.price * it.qty, 0), [selected]);
 
+  // Rev3: 受付が締め切られているか。手動締切(is_open=false)に加え、自動〆切(close_at)の定刻を過ぎていたら終了。
+  //   サーバーも create_reservation で同条件を弾く（migration 0020）。ここは押す前に受付終了を見せる表示用ガード。
+  const closed = !!page && (!page.is_open || (page.close_at != null && Date.now() >= page.close_at));
+
   const setItemQty = (key: string, next: number) => {
     setSubmitError(null);
     setQty((prev) => ({ ...prev, [key]: Math.max(0, Math.min(99, next)) }));
@@ -176,7 +180,7 @@ export function ReservePage() {
 
         {page.note ? <div className="note-box">{page.note}</div> : null}
 
-        {!page.is_open ? (
+        {closed ? (
           <div className="closed-box">現在、取り置きの受付は締め切られています。</div>
         ) : items.length === 0 ? (
           <p className="muted">公開されている品物がありません。</p>

@@ -11,6 +11,7 @@ export interface ReservationPage {
   oshinagaki_urls: string[];
   note: string;
   is_open: boolean;
+  close_at: number | null;   // 自動〆切の定刻（epoch ms・null＝自動〆切なし）。これを過ぎたら受付終了表示にする。
 }
 
 // 公開お品書きの1品目（reservation_pages.items のスナップショット要素）。
