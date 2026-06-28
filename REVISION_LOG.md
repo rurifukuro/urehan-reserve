@@ -20,6 +20,14 @@
 - preview（ライブ DB）で格納順 [単品A, セットX, 単品B, セットY] のページを開き、
   表示が [セットX, セットY, 単品A, 単品B] になることを確認。検証データは後始末済み。
 
+### 公開（2026-06-28・ユーザー承認済み）
+- GitHub リポジトリ `rurifukuro/urehan-reserve`（public）を作成し `main` を push。
+- GitHub Pages を「GitHub Actions」ソースで有効化 → `Deploy to GitHub Pages` ワークフロー成功。
+- 公開URL **https://rurifukuro.github.io/urehan-reserve/** が HTTP 200（title「取り置き予約」、
+  アセットは `/urehan-reserve/` 配下）。レジさぽっ！本体が生成する買い手URL
+  `…/urehan-reserve/#/r/<slug>` の **404 が解消**。
+- 検証用テストページ `__sort_test__` を本番 SQL Editor から削除（後始末完了。REST で rows=0 確認）。
+
 ---
 
 ## Rev1 — 取り置き予約 Web アプリ 初期実装＋ベースライン（2026-06-28）
@@ -67,4 +75,4 @@ concafe-yoyaku の Vite 雛形（React19 + TS strict + HashRouter + GitHub Actio
 - **残（要ユーザー操作）**:
   - レジさぽっ！アプリ（Rev11）UI 側からの「公開」「取り置き一覧」表示は実機での最終確認が未了
     （RPC 配線自体は上記で実証済み・アプリは tsc 通過）。
-  - **GitHub Pages 公開**: リポジトリ作成・push・Pages 有効化は公開操作（WEB9＝許可制）。ユーザー確認後に実施。
+  - **GitHub Pages 公開**: 2026-06-28 ユーザー承認のうえ実施済み（Rev2「公開」節を参照）。公開URL は HTTP 200・404 解消済み。
