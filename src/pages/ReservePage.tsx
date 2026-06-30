@@ -170,6 +170,12 @@ export function ReservePage() {
               <p className="muted small">
                 ※ この番号はこの端末に保存されません。スクリーンショットの保存をおすすめします。
               </p>
+
+              {/* とれはんっ！連携（項目3）: 予約したサークルの頒布物を、買い手向けアプリ「とれはんっ！」の
+                  自分のお品書きリストにそのまま登録できる導線。ディープリンク torehan://reserve?slug=… で起動し、
+                  未インストールの場合の案内（ポータル）も併記する。 */}
+              <TorehanCta slug={slug} />
+
               <button className="btn-ghost" onClick={onCancel} disabled={cancelling}>
                 {cancelling ? '取り消し中…' : 'この取り置きを取り消す'}
               </button>
@@ -255,6 +261,30 @@ export function ReservePage() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// とれはんっ！起動 CTA（項目3）。予約完了画面の下部に置く。
+// ディープリンク（torehan://reserve?slug=…）は <a href> で開く＝モバイルのカスタムスキーム起動が最も確実。
+// アプリ未導入の人向けに、ポータル（rurifukuro.github.io/torehan/）への案内リンクも併記する。
+const TOREHAN_PORTAL = 'https://rurifukuro.github.io/torehan/';
+function TorehanCta({ slug }: { slug: string }) {
+  const deepLink = `torehan://reserve?slug=${encodeURIComponent(slug)}`;
+  return (
+    <div className="torehan-cta">
+      <div className="torehan-cta-title">📲 とれはんっ！に頒布物を登録</div>
+      <p className="torehan-cta-text">
+        「とれはんっ！」は買い手向けの無料お品書き管理アプリ。
+        いま予約したこのサークルの頒布物を、そのままあなたのリストへ登録できます。
+        当日の買い回り・予算管理・サークルの場所メモに便利です。
+      </p>
+      <a className="btn-primary btn-as-link" href={deepLink}>
+        とれはんっ！で開く
+      </a>
+      <a className="torehan-install" href={TOREHAN_PORTAL} target="_blank" rel="noreferrer">
+        アプリをお持ちでない方・「とれはんっ！」とは？ →
+      </a>
     </div>
   );
 }

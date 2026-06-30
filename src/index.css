@@ -223,6 +223,38 @@ body {
   font-weight: 700;
 }
 
+/* とれはんっ！連携 CTA（完了画面・項目3） */
+.torehan-cta {
+  margin-top: 20px;
+  padding: 16px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fbf3ff, #f3f7ff);
+  text-align: center;
+}
+.torehan-cta-title { font-size: 15px; font-weight: 800; color: #6a4ea0; }
+.torehan-cta-text {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+  margin: 8px 0 14px;
+  text-align: left;
+}
+/* btn-primary を <a> で使うためのリンク化（既定の下線・文字色を打ち消す） */
+.btn-as-link {
+  display: block;
+  text-decoration: none;
+  text-align: center;
+  color: #fff;
+}
+.torehan-install {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--muted);
+  text-decoration: underline;
+}
+
 /* スピナー */
 .spinner {
   width: 38px;
