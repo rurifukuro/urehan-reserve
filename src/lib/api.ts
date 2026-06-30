@@ -25,6 +25,7 @@ export async function createReservation(
   nickname: string,
   installId: string,
   items: ReservedItem[],
+  password?: string,
 ): Promise<CreateReservationResult> {
   const { data, error } = await supabase.rpc('create_reservation', {
     p_slug: slug,
@@ -32,6 +33,7 @@ export async function createReservation(
     p_installation_id: installId,
     p_items: items,
     p_now: Date.now(),
+    p_password: password || null,
   });
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as CreateReservationResult[];

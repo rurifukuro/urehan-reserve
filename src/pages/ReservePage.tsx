@@ -22,6 +22,7 @@ export function ReservePage() {
   const [orderedItems, setOrderedItems] = useState<ReservedItem[]>([]); // 確定した予約内容（結果表示用）
   const [cancelled, setCancelled] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [password, setPassword] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -78,13 +79,16 @@ export function ReservePage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const r = await createReservation(slug, nickname.trim(), installId, selected);
+      const r = await createReservation(slug, nickname.trim(), installId, selected, password || undefined);
       setOrderedItems(selected);
       setResult(r);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      // サーバー側で締切後に押された等のメッセージを買い手向けに翻訳。
-      if (msg.includes('reservations closed')) {
+      if (msg.includes('password_required') || msg.includes('password_mismatch')) {
+        setSubmitError('パスワードが正しくありません。');
+      } else if (msg.includes('reservation_limit_reached')) {
+        setSubmitError('予約が上限に達しました。');
+      } else if (msg.includes('reservations closed')) {
         setSubmitError('受付は締め切られました。');
       } else if (msg.includes('page not found')) {
         setSubmitError('ページが見つかりませんでした。');
@@ -167,14 +171,14 @@ export function ReservePage() {
                 <span className="total-amount">{yen(total)}</span>
               </div>
               {page.note ? <div className="note-box">{page.note}</div> : null}
-              <p className="muted small">
-                ※ この番号はこの端末に保存されません。スクリーンショットの保存をおすすめします。
+              <p className="warn-box">
+                ⚠️ 受取番号はこの画面にしか表示されません。スクリーンショットの保存を強くおすすめします。
               </p>
 
               {/* とれはんっ！連携（項目3）: 予約したサークルの頒布物を、買い手向けアプリ「とれはんっ！」の
                   自分のお品書きリストにそのまま登録できる導線。ディープリンク torehan://reserve?slug=… で起動し、
                   未インストールの場合の案内（ポータル）も併記する。 */}
-              <TorehanCta slug={slug} />
+              <TorehanCta slug={slug} rno={result.pickup_no} />
 
               <button className="btn-ghost" onClick={onCancel} disabled={cancelling}>
                 {cancelling ? '取り消し中…' : 'この取り置きを取り消す'}
@@ -253,6 +257,19 @@ export function ReservePage() {
               ※ お名前・連絡先などは取得しません。受け渡しは当日の受取番号で行います。
             </p>
 
+            {page.has_password && (
+              <label className="field">
+                <span className="field-label">パスワード</span>
+                <input
+                  className="input"
+                  type="password"
+                  value={password}
+                  placeholder="パスワードを入力"
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </label>
+            )}
+
             {submitError ? <div className="error-box">{submitError}</div> : null}
 
             <button className="btn-primary" onClick={onSubmit} disabled={submitting}>
@@ -269,8 +286,8 @@ export function ReservePage() {
 // ディープリンク（torehan://reserve?slug=…）は <a href> で開く＝モバイルのカスタムスキーム起動が最も確実。
 // アプリ未導入の人向けに、ポータル（rurifukuro.github.io/torehan/）への案内リンクも併記する。
 const TOREHAN_PORTAL = 'https://rurifukuro.github.io/torehan/';
-function TorehanCta({ slug }: { slug: string }) {
-  const deepLink = `torehan://reserve?slug=${encodeURIComponent(slug)}`;
+function TorehanCta({ slug, rno }: { slug: string; rno: number }) {
+  const deepLink = `torehan://reserve?slug=${encodeURIComponent(slug)}&rno=${rno}`;
   const [showFallback, setShowFallback] = useState(false);
 
   // <a href> によるカスタムスキーム遷移はそのまま走らせる（preventDefault しない＝モバイルで最も確実）。
