@@ -271,6 +271,19 @@ export function ReservePage() {
 const TOREHAN_PORTAL = 'https://rurifukuro.github.io/torehan/';
 function TorehanCta({ slug }: { slug: string }) {
   const deepLink = `torehan://reserve?slug=${encodeURIComponent(slug)}`;
+  const [showFallback, setShowFallback] = useState(false);
+
+  // <a href> によるカスタムスキーム遷移はそのまま走らせる（preventDefault しない＝モバイルで最も確実）。
+  // アプリが起動すればブラウザはバックグラウンド（visibilityState='hidden'）になる。
+  // 一定時間後もページが前面（'visible'）のままなら未起動の可能性が高いので、入手導線を出して
+  // 「ボタンを押しても無反応で行き止まり」を防ぐ。起動できた人には誤って出さない（visible 判定で抑制）。
+  const onTryOpen = () => {
+    setShowFallback(false);
+    window.setTimeout(() => {
+      if (document.visibilityState === 'visible') setShowFallback(true);
+    }, 1800);
+  };
+
   return (
     <div className="torehan-cta">
       <div className="torehan-cta-title">📲 とれはんっ！に頒布物を登録</div>
@@ -278,10 +291,22 @@ function TorehanCta({ slug }: { slug: string }) {
         「とれはんっ！」は買い手向けの無料お品書き管理アプリ。
         いま予約したこのサークルの頒布物を、そのままあなたのリストへ登録できます。
         当日の買い回り・予算管理・サークルの場所メモに便利です。
+        <br />
+        <span className="torehan-cta-note">※ アプリをインストール済みの方は下のボタンで開けます。</span>
       </p>
-      <a className="btn-primary btn-as-link" href={deepLink}>
+      <a className="btn-primary btn-as-link" href={deepLink} onClick={onTryOpen}>
         とれはんっ！で開く
       </a>
+      {showFallback ? (
+        <div className="torehan-cta-fallback">
+          <p className="torehan-cta-fallback-text">
+            アプリが開きませんでしたか？ まだインストールされていない場合は、こちらから入手できます。
+          </p>
+          <a className="btn-primary btn-as-link" href={TOREHAN_PORTAL} target="_blank" rel="noreferrer">
+            とれはんっ！を入手する
+          </a>
+        </div>
+      ) : null}
       <a className="torehan-install" href={TOREHAN_PORTAL} target="_blank" rel="noreferrer">
         アプリをお持ちでない方・「とれはんっ！」とは？ →
       </a>
