@@ -41,8 +41,17 @@ export function ReservePage() {
   // 同種内は公開時の順序を維持する（安定ソート）。selected・完了画面の内訳もこの順に従う。
   const items = useMemo<PageItem[]>(() => {
     const raw = page?.items ?? [];
+    // 防御: 同一 key の品目が重複していたら最初の1つだけ残す（売り手側の二重公開・絵文字重複などで
+    //   同じセットが複数行に増えて見えるのを防ぐ）。key が無い古い形式は name で代替キーにする。
+    const seen = new Set<string>();
+    const deduped = raw.filter((it) => {
+      const k = it.key || it.name;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
     const rank = (k: PageItem['kind']) => (k === 'bundle' ? 0 : 1);
-    return [...raw].sort((a, b) => rank(a.kind) - rank(b.kind));
+    return [...deduped].sort((a, b) => rank(a.kind) - rank(b.kind));
   }, [page]);
 
   const selected: ReservedItem[] = useMemo(
