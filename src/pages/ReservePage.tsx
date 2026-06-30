@@ -68,9 +68,16 @@ export function ReservePage() {
   //   サーバーも create_reservation で同条件を弾く（migration 0020）。ここは押す前に受付終了を見せる表示用ガード。
   const closed = !!page && (!page.is_open || (page.close_at != null && Date.now() >= page.close_at));
 
+  const itemMaxQty = (it: PageItem): number => {
+    const limit = it.limitPerPerson;
+    return (limit != null && limit > 0) ? limit : 99;
+  };
+
   const setItemQty = (key: string, next: number) => {
     setSubmitError(null);
-    setQty((prev) => ({ ...prev, [key]: Math.max(0, Math.min(99, next)) }));
+    const item = items.find((it) => it.key === key);
+    const max = item ? itemMaxQty(item) : 99;
+    setQty((prev) => ({ ...prev, [key]: Math.max(0, Math.min(max, next)) }));
   };
 
   const onSubmit = async () => {
@@ -86,6 +93,10 @@ export function ReservePage() {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes('password_required') || msg.includes('password_mismatch')) {
         setSubmitError('パスワードが正しくありません。');
+      } else if (msg.includes('item_limit_per_person_exceeded')) {
+        setSubmitError('一部の品物が一人当たりの限数を超えています。');
+      } else if (msg.includes('item_max_qty_exceeded')) {
+        setSubmitError('一部の品物が予約頒布上限に達しました。');
       } else if (msg.includes('reservation_limit_reached')) {
         setSubmitError('予約が上限に達しました。');
       } else if (msg.includes('reservations closed')) {
@@ -208,12 +219,23 @@ export function ReservePage() {
             <ul className="items">
               {items.map((it) => {
                 const n = qty[it.key] ?? 0;
+                const max = itemMaxQty(it);
+                const limitTag = it.limitPerPerson != null && it.limitPerPerson > 0
+                  ? `（お一人様${it.limitPerPerson}点まで）` : null;
+                const maxTag = it.maxQty != null && it.maxQty > 0
+                  ? `（頒布上限 ${it.maxQty}点）` : null;
                 return (
                   <li key={it.key} className="item">
                     <div className="item-main">
                       <span className="item-name">{it.name}</span>
                       <span className="item-price">{yen(it.price)}</span>
                     </div>
+                    {(limitTag || maxTag) && (
+                      <div className="item-limits">
+                        {limitTag && <span className="limit-tag">{limitTag}</span>}
+                        {maxTag && <span className="limit-tag">{maxTag}</span>}
+                      </div>
+                    )}
                     <div className="stepper">
                       <button
                         className="step-btn"
@@ -228,6 +250,7 @@ export function ReservePage() {
                         className="step-btn"
                         aria-label={`${it.name} を増やす`}
                         onClick={() => setItemQty(it.key, n + 1)}
+                        disabled={n >= max}
                       >
                         ＋
                       </button>

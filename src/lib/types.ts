@@ -22,6 +22,8 @@ export interface PageItem {
   name: string;
   price: number;
   kind: 'product' | 'bundle';
+  limitPerPerson?: number | null;
+  maxQty?: number | null;
 }
 
 // 買い手が予約する1品目（create_reservation の p_items 要素）。
