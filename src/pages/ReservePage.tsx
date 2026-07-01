@@ -94,9 +94,17 @@ export function ReservePage() {
       if (msg.includes('password_required') || msg.includes('password_mismatch')) {
         setSubmitError('パスワードが正しくありません。');
       } else if (msg.includes('item_limit_per_person_exceeded')) {
-        setSubmitError('一部の品物が一人当たりの限数を超えています。');
+        // migration 0026: サーバーが「item_limit_per_person_exceeded: 「品名」はお一人様N点までです（既にX点予約済み、今回Y点追加）」の形で返す。
+        // ": " 以降の日本語詳細をそのまま表示（品名・限数・既存量・追加量が入る）。旧サーバー用にフォールバック文言も残す。
+        const detail = msg.replace(/^.*item_limit_per_person_exceeded:\s*/, '').trim();
+        setSubmitError(detail && detail !== msg
+          ? detail
+          : '一部の品物が一人当たりの限数を超えています。');
       } else if (msg.includes('item_max_qty_exceeded')) {
-        setSubmitError('一部の品物が予約頒布上限に達しました。');
+        const detail = msg.replace(/^.*item_max_qty_exceeded:\s*/, '').trim();
+        setSubmitError(detail && detail !== msg
+          ? detail
+          : '一部の品物が予約頒布上限に達しました。');
       } else if (msg.includes('reservation_limit_reached')) {
         setSubmitError('予約が上限に達しました。');
       } else if (msg.includes('reservations closed')) {

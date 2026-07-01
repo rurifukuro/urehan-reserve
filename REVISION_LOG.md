@@ -9,6 +9,61 @@
 
 ---
 
+## Rev9 — 予約送信エラーに品目名・上限詳細を表示（migration 0026 連携）（2026-07-01）
+
+一般参加者（買い手）が「取り置きを予約する」を押した際、サーバー側で `item_limit_per_person_exceeded` / `item_max_qty_exceeded` が発火した時に **どの品目がどの上限に何点超えたか** を画面に明示する。
+
+### 背景
+- サーバーは migration 0024（本番適用 2026-07-01）で品目別限数を検査していたが、英字コードだけを返していた。
+- Rev7 の onSubmit にはこれら新エラー種の分岐が **無く**、既定の「予約の送信に失敗しました。通信状況をご確認ください。」に落ちていた。
+- 買い手側から見ると「限数バグが直っていない」ように見えた（実際はサーバー側で正しく弾かれていた）。
+- migration 0026（本番適用 2026-07-01）でサーバーが日本語詳細文言を返すよう改修。本 Rev はそれを画面表示する。
+
+### 変更（src/pages/ReservePage.tsx）
+- `onSubmit` の catch 節：
+  - `msg.includes('item_limit_per_person_exceeded')` → コロン以降の詳細文言をそのまま `setSubmitError` に渡す。旧サーバー用に汎用文言フォールバックも残す。
+  - `msg.includes('item_max_qty_exceeded')` → 同上。
+- 表示例：「「新刊小説A」はお一人様1点までです（既に1点予約済み、今回1点追加）」
+- 「「アンソロジーZ」は頒布上限15点に達しました（既に15点予約済み、今回1点追加）」
+
+### 動作確認
+- `tsc -b && vite build` 通過（EXIT=0・新バンドル `index-BGd5dxLu.js` 446.36 kB）。
+- サーバー側 REST 直叩き（`P0001 "page not found"`）で schema cache が 0026 版で生きていることを確認済み。
+- 実存ページでの発火は本番 Pages デプロイ後にユーザー端末で再現テスト。
+
+## Rev8 — 品目別限数/頒布上限の表示・ステッパー制限を追加（2026-07-01・記録追いつき）
+
+migration 0024 の品目別 `limitPerPerson`/`maxQty` に対応する UI を追加。
+
+### 変更（src/pages/ReservePage.tsx / src/lib/types.ts）
+- `PageItem` 型に `limitPerPerson?: number | null` / `maxQty?: number | null` を追加（サーバー戻り値の追加フィールドに整合）。
+- `itemMaxQty(it)` helper：品目ごとの上限（limitPerPerson＞0なら限数、それ以外は 99）を返す。
+- `setItemQty` を上限クランプ付きに変更。
+- ステッパーの「＋」ボタンに `disabled={n >= max}` を追加。
+- 品目名下に `.item-limits`（`.limit-tag`）でタグ表示：
+  - 「（お一人様N点まで）」（limitPerPerson＞0）
+  - 「（頒布上限 N点）」（maxQty＞0）
+- catch 節に `item_limit_per_person_exceeded` / `item_max_qty_exceeded` の汎用文言分岐を追加（Rev9 で詳細版に上書き）。
+
+### 記録追いつき理由
+- Rev8 のコミット時（`c063442`）に本 LOG へのエントリ追加を忘れていた。1指示=1Rev=1コミット＋本ログ追記のルールに反していたので Rev9 のコミット内でまとめて追いつく。
+
+## Rev7 — 取り置き予約にパスワード保護・上限・警告強調・受取番号ディープリンク転送を追加（A-1/A-2/A-4/C-1）（2026-07-01・記録追いつき）
+
+migration 0023 の password_hash / max_reservations 追加と、`get_reservation_page` の戻り値追加（has_password / max_reservations）に整合する買い手側 UI。
+
+### 変更
+- `src/lib/types.ts`：`ReservationPage` に `has_password: boolean` / `max_reservations: number | null` を追加。
+- `src/pages/ReservePage.tsx`：
+  - `page.has_password` の場合にパスワード入力欄を表示。空欄で送信すると `password_required` を分岐表示。誤入力は `password_mismatch` で「パスワードが正しくありません。」。
+  - `reservation_limit_reached` を「予約が上限に達しました。」で分岐表示。
+  - 受取番号の表示を強調＋警告ボックス（「スクリーンショット保存を強くおすすめします」）。
+  - Rev5/6 のディープリンク（`torehan://reserve?slug=…&rno=<受取番号>`）に受取番号 `rno` を付与し、とれはんっ！側で照合できるように。
+- `src/lib/api.ts`：`createReservation` に `password?` 引数追加、`p_password: password || null` を渡す（migration 0023 の 6-arg シグネチャに整合）。
+
+### 記録追いつき理由
+- Rev7 のコミット時（`929d69d`）に本 LOG へのエントリ追加を忘れていた。Rev8 と同時に Rev9 で追いつく。
+
 ## Rev6 — とれはんっ！起動ディープリンクの未起動フォールバックを追加（横断設計レビュー指摘D）（2026-06-30）
 
 3アプリ横断の設計レビューで挙がった「ディープリンク導線が未インストール時に無反応で行き止まりになる」点を強化。
