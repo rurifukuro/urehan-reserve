@@ -197,7 +197,7 @@ export function ReservePage() {
               {/* とれはんっ！連携（項目3）: 予約したサークルの頒布物を、買い手向けアプリ「とれはんっ！」の
                   自分のお品書きリストにそのまま登録できる導線。ディープリンク torehan://reserve?slug=… で起動し、
                   未インストールの場合の案内（ポータル）も併記する。 */}
-              <TorehanCta slug={slug} rno={result.pickup_no} />
+              <TorehanCta slug={slug} rno={result.pickup_no} reservedKeys={orderedItems.map((it) => it.key)} />
 
               <button className="btn-ghost" onClick={onCancel} disabled={cancelling}>
                 {cancelling ? '取り消し中…' : 'この取り置きを取り消す'}
@@ -315,8 +315,11 @@ export function ReservePage() {
 // ディープリンク（torehan://reserve?slug=…）は <a href> で開く＝モバイルのカスタムスキーム起動が最も確実。
 // アプリ未導入の人向けに、ポータル（rurifukuro.github.io/torehan/）への案内リンクも併記する。
 const TOREHAN_PORTAL = 'https://rurifukuro.github.io/torehan/';
-function TorehanCta({ slug, rno }: { slug: string; rno: number }) {
-  const deepLink = `torehan://reserve?slug=${encodeURIComponent(slug)}&rno=${rno}`;
+function TorehanCta({ slug, rno, reservedKeys }: { slug: string; rno: number; reservedKeys: string[] }) {
+  // Rev11: 買い手が実際に予約した品目 key（'p<productId>' / 'b<bundleId>'）を items= で渡す。
+  // とれはんっ！側はこの key に一致する品目へ最初から「欲しい」チェックを入れる。
+  const itemsParam = reservedKeys.length > 0 ? `&items=${encodeURIComponent(reservedKeys.join(','))}` : '';
+  const deepLink = `torehan://reserve?slug=${encodeURIComponent(slug)}&rno=${rno}${itemsParam}`;
   const [showFallback, setShowFallback] = useState(false);
 
   // <a href> によるカスタムスキーム遷移はそのまま走らせる（preventDefault しない＝モバイルで最も確実）。
