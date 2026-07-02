@@ -193,3 +193,20 @@ concafe-yoyaku の Vite 雛形（React19 + TS strict + HashRouter + GitHub Actio
   - レジさぽっ！アプリ（Rev11）UI 側からの「公開」「取り置き一覧」表示は実機での最終確認が未了
     （RPC 配線自体は上記で実証済み・アプリは tsc 通過）。
   - **GitHub Pages 公開**: 2026-06-28 ユーザー承認のうえ実施済み（Rev2「公開」節を参照）。公開URL は HTTP 200・404 解消済み。
+
+---
+
+## Rev10（2026-07-02）— 予約ページから「頒布上限」表示を除去（ユーザー指摘④）
+
+### 背景
+Rev8 で品目ごとに「（頒布上限 N点）」タグを表示していたが、在庫数を買い手に見せない方針の指摘を受け除去。
+（「表示しないように」の指摘に対し Rev9 時点で残存していたものの是正）
+
+### 変更
+- `ReservePage.tsx`: `maxTag`（頒布上限 N点）の生成・表示を削除。「（お一人様N点まで）」の limitTag は維持。
+- **ステッパーの上限制御（`itemMaxQty` による＋ボタン disabled）は機能として維持**＝表示だけを消し、
+  上限超過の予約自体は従来どおり不可（サーバー側 RPC の上限チェックも Rev9 のまま）。
+
+### 動作確認
+- `npx tsc --noEmit` EXIT=0・`npm run build` 成功。
+- GitHub Pages 再デプロイ（push → Actions）＋実 HTTP 検証は本 Rev コミット後に実施。

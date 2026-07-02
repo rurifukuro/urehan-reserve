@@ -230,18 +230,16 @@ export function ReservePage() {
                 const max = itemMaxQty(it);
                 const limitTag = it.limitPerPerson != null && it.limitPerPerson > 0
                   ? `（お一人様${it.limitPerPerson}点まで）` : null;
-                const maxTag = it.maxQty != null && it.maxQty > 0
-                  ? `（頒布上限 ${it.maxQty}点）` : null;
+                // 頒布上限（maxQty）は表示しない（在庫数を買い手に見せない・Rev10）。ステッパーの上限制御は max で維持
                 return (
                   <li key={it.key} className="item">
                     <div className="item-main">
                       <span className="item-name">{it.name}</span>
                       <span className="item-price">{yen(it.price)}</span>
                     </div>
-                    {(limitTag || maxTag) && (
+                    {limitTag && (
                       <div className="item-limits">
-                        {limitTag && <span className="limit-tag">{limitTag}</span>}
-                        {maxTag && <span className="limit-tag">{maxTag}</span>}
+                        <span className="limit-tag">{limitTag}</span>
                       </div>
                     )}
                     <div className="stepper">
