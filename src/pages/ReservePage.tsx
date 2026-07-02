@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import type { ReservationPage, ReservedItem, CreateReservationResult, PageItem } from '../lib/types';
 import { getReservationPage, createReservation, cancelReservation } from '../lib/api';
 import { getInstallId } from '../lib/installId';
+import { saveLastReservation, loadLastReservation, clearLastReservation } from '../lib/lastReservation';
 import { yen } from '../lib/format';
 
 type Load = 'loading' | 'loaded' | 'notfound' | 'error';
@@ -32,6 +33,13 @@ export function ReservePage() {
         if (!alive) return;
         if (!p) { setLoad('notfound'); return; }
         setPage(p);
+        // Rev12（提案1）: この端末で予約済みなら完了画面（受取番号）を復元する。
+        //   「受取番号を控え忘れた」「ページを閉じてしまった」の救済。キャンセル成功時に消える。
+        const saved = loadLastReservation(slug);
+        if (saved) {
+          setResult({ reservation_id: saved.reservation_id, pickup_no: saved.pickup_no });
+          setOrderedItems(saved.items);
+        }
         setLoad('loaded');
       })
       .catch(() => { if (alive) setLoad('error'); });
@@ -63,6 +71,8 @@ export function ReservePage() {
     [items, qty],
   );
   const total = useMemo(() => selected.reduce((s, it) => s + it.price * it.qty, 0), [selected]);
+  // 完了画面の合計は確定内訳（orderedItems）から出す。復元表示（Rev12）では qty 状態が空＝total は使えない。
+  const orderedTotal = useMemo(() => orderedItems.reduce((s, it) => s + it.price * it.qty, 0), [orderedItems]);
 
   // Rev3: 受付が締め切られているか。手動締切(is_open=false)に加え、自動〆切(close_at)の定刻を過ぎていたら終了。
   //   サーバーも create_reservation で同条件を弾く（migration 0020）。ここは押す前に受付終了を見せる表示用ガード。
@@ -87,6 +97,7 @@ export function ReservePage() {
     setSubmitError(null);
     try {
       const r = await createReservation(slug, nickname.trim(), installId, selected, password || undefined);
+      saveLastReservation(slug, r, selected); // Rev12: 再訪時に受取番号を再表示できるように保存
       setOrderedItems(selected);
       setResult(r);
     } catch (e) {
@@ -125,8 +136,12 @@ export function ReservePage() {
     setCancelling(true);
     try {
       const ok = await cancelReservation(result.reservation_id, installId);
-      if (ok) setCancelled(true);
-      else window.alert('取り消せませんでした（すでに受取済みの可能性があります）。');
+      if (ok) {
+        clearLastReservation(slug); // Rev12: 取り消した予約の番号は再表示しない
+        setCancelled(true);
+      } else {
+        window.alert('取り消せませんでした（すでに受取済みの可能性があります）。');
+      }
     } catch {
       window.alert('取り消しに失敗しました。');
     } finally {
@@ -187,11 +202,12 @@ export function ReservePage() {
               </ul>
               <div className="total-row">
                 <span>合計</span>
-                <span className="total-amount">{yen(total)}</span>
+                <span className="total-amount">{yen(orderedTotal)}</span>
               </div>
               {page.note ? <div className="note-box">{page.note}</div> : null}
               <p className="warn-box">
-                ⚠️ 受取番号はこの画面にしか表示されません。スクリーンショットの保存を強くおすすめします。
+                ⚠️ 同じ端末・ブラウザでこのページを開き直すと受取番号を再表示できます。
+                別の端末で見る場合に備えて、スクリーンショットの保存もおすすめします。
               </p>
 
               {/* とれはんっ！連携（項目3）: 予約したサークルの頒布物を、買い手向けアプリ「とれはんっ！」の
