@@ -191,6 +191,7 @@ export function ReservePage() {
                 <span className="pickup-no">{result.pickup_no}</span>
               </div>
               <CircleHeader page={page} />
+              <OshinagakiGallery urls={page.oshinagaki_urls} />
               <ul className="summary">
                 {orderedItems.map((it) => (
                   <li key={it.key}>
@@ -213,7 +214,7 @@ export function ReservePage() {
               {/* とれはんっ！連携（項目3）: 予約したサークルの頒布物を、買い手向けアプリ「とれはんっ！」の
                   自分のお品書きリストにそのまま登録できる導線。ディープリンク torehan://reserve?slug=… で起動し、
                   未インストールの場合の案内（ポータル）も併記する。 */}
-              <TorehanCta slug={slug} rno={result.pickup_no} reservedKeys={orderedItems.map((it) => it.key)} />
+              <TorehanCta slug={slug} rno={result.pickup_no} orderedItems={orderedItems} />
 
               <button className="btn-ghost" onClick={onCancel} disabled={cancelling}>
                 {cancelling ? '取り消し中…' : 'この取り置きを取り消す'}
@@ -231,6 +232,7 @@ export function ReservePage() {
       <div className="card">
         <div className="brand">🎫 取り置き予約</div>
         <CircleHeader page={page} />
+        <OshinagakiGallery urls={page.oshinagaki_urls} />
 
         {page.note ? <div className="note-box">{page.note}</div> : null}
 
@@ -331,10 +333,11 @@ export function ReservePage() {
 // ディープリンク（torehan://reserve?slug=…）は <a href> で開く＝モバイルのカスタムスキーム起動が最も確実。
 // アプリ未導入の人向けに、ポータル（rurifukuro.github.io/torehan/）への案内リンクも併記する。
 const TOREHAN_PORTAL = 'https://rurifukuro.github.io/torehan/';
-function TorehanCta({ slug, rno, reservedKeys }: { slug: string; rno: number; reservedKeys: string[] }) {
-  // Rev11: 買い手が実際に予約した品目 key（'p<productId>' / 'b<bundleId>'）を items= で渡す。
-  // とれはんっ！側はこの key に一致する品目へ最初から「欲しい」チェックを入れる。
-  const itemsParam = reservedKeys.length > 0 ? `&items=${encodeURIComponent(reservedKeys.join(','))}` : '';
+function TorehanCta({ slug, rno, orderedItems }: { slug: string; rno: number; orderedItems: ReservedItem[] }) {
+  // items= は key:qty のカンマ区切り（例: pA:2,bB:1）。とれはんっ！側で予約個数を反映する。
+  const itemsParam = orderedItems.length > 0
+    ? `&items=${encodeURIComponent(orderedItems.map((it) => `${it.key}:${it.qty}`).join(','))}`
+    : '';
   const deepLink = `torehan://reserve?slug=${encodeURIComponent(slug)}&rno=${rno}${itemsParam}`;
   const [showFallback, setShowFallback] = useState(false);
 
@@ -386,6 +389,38 @@ function CircleHeader({ page }: { page: ReservationPage }) {
       <div className="circle-name">{page.circle_name || 'サークル'}</div>
       {sub ? <div className="circle-sub">{sub}</div> : null}
     </div>
+  );
+}
+
+function OshinagakiGallery({ urls }: { urls: string[] }) {
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null);
+  if (urls.length === 0) return null;
+  return (
+    <>
+      <div className="oshi-gallery">
+        {urls.map((url, i) => (
+          <img key={i} src={url} alt={`お品書き ${i + 1}`} className="oshi-thumb" onClick={() => setLightboxIdx(i)} />
+        ))}
+      </div>
+      {lightboxIdx !== null && (
+        <div className="oshi-lightbox" onClick={() => setLightboxIdx(null)}>
+          <button className="oshi-lightbox-close" onClick={() => setLightboxIdx(null)}>×</button>
+          {urls.length > 1 && (
+            <>
+              <button
+                className="oshi-lightbox-nav prev"
+                onClick={(e) => { e.stopPropagation(); setLightboxIdx((lightboxIdx - 1 + urls.length) % urls.length); }}
+              >‹</button>
+              <button
+                className="oshi-lightbox-nav next"
+                onClick={(e) => { e.stopPropagation(); setLightboxIdx((lightboxIdx + 1) % urls.length); }}
+              >›</button>
+            </>
+          )}
+          <img src={urls[lightboxIdx]} alt={`お品書き ${lightboxIdx + 1}`} onClick={(e) => e.stopPropagation()} />
+        </div>
+      )}
+    </>
   );
 }
 
