@@ -292,11 +292,11 @@ body {
 /* お品書き画像ギャラリー */
 .oshi-gallery {
   display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 8px;
-  overflow-x: auto;
   padding: 4px 0 14px;
   margin-bottom: 10px;
-  -webkit-overflow-scrolling: touch;
 }
 .oshi-thumb {
   flex: none;
