@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { SiteFooter } from '../components/SiteFooter';
 import { useParams } from 'react-router-dom';
 import type { ReservationPage, ReservedItem, CreateReservationResult, PageItem } from '../lib/types';
 import { getReservationPage, createReservation, cancelReservation } from '../lib/api';
@@ -160,6 +161,7 @@ export function ReservePage() {
           <div className="brand">🎫 取り置き予約</div>
           <p className="muted">このURLの取り置きページは見つかりませんでした。</p>
           <p className="muted small">URLが正しいかご確認ください。サークルが公開を取り下げた可能性もあります。</p>
+          <SiteFooter />
         </div>
       </Centered>
     );
@@ -170,6 +172,7 @@ export function ReservePage() {
         <div className="card narrow">
           <div className="brand">🎫 取り置き予約</div>
           <p className="muted">読み込みに失敗しました。通信状況をご確認のうえ、再度お試しください。</p>
+          <SiteFooter />
         </div>
       </Centered>
     );
@@ -221,6 +224,7 @@ export function ReservePage() {
               </button>
             </>
           )}
+          <SiteFooter />
         </div>
       </div>
     );
@@ -324,6 +328,7 @@ export function ReservePage() {
             </button>
           </>
         )}
+        <SiteFooter />
       </div>
     </div>
   );

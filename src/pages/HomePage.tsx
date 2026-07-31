@@ -1,4 +1,6 @@
 // ルート（slug 無し）に来たときの案内。取り置きは個別URL（/#/r/<slug>）が必要。
+import { SiteFooter } from '../components/SiteFooter';
+
 export function HomePage() {
   return (
     <div className="page center">
@@ -10,6 +12,7 @@ export function HomePage() {
         <p className="muted small">
           このページ単体では予約できません。各サークルの取り置きURL（QRコードやSNSのリンク）からアクセスしてください。
         </p>
+        <SiteFooter />
       </div>
     </div>
   );

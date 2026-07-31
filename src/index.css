@@ -371,3 +371,14 @@ body {
   animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* 公開ページ共通フッター（UGC-PATH / ガイドライン1.2(d)・2026-07-31）
+   掲載された当事者がアプリ無しで運営へ連絡できる唯一の導線なので、
+   カード末尾で罫線を挟んで常に見える位置に置く（折りたたまない）。 */
+.site-footer {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #eee);
+}
+.site-footer p { margin: 0; }
+.site-footer a { color: var(--primary-dark); }
