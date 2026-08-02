@@ -208,6 +208,11 @@ export function ReservePage() {
                 <span>合計</span>
                 <span className="total-amount">{yen(orderedTotal)}</span>
               </div>
+              {/* 🔴 Rev83（V-6 / P-8・ユーザー決定 2026-08-02＝「当日はレジの現在価格で会計する」）:
+                  取り置きは金額を固定しない＝サークル側が公開後に価格や税設定を変えれば、当日の
+                  請求額はここの表示と変わる。仕様としてそう決めた以上、**買い手に先に伝えておく**
+                  （黙って違う額を請求すると、その場で「話が違う」になる）。 */}
+              <p className="muted small">※ 当日は会場での価格・税設定でお会計します。上の金額と変わる場合があります。</p>
               {page.note ? <div className="note-box">{page.note}</div> : null}
               <p className="warn-box">
                 ⚠️ 同じ端末・ブラウザでこのページを開き直すと受取番号を再表示できます。
@@ -292,6 +297,9 @@ export function ReservePage() {
               <span>合計</span>
               <span className="total-amount">{yen(total)}</span>
             </div>
+            {/* 🔴 Rev83（V-6 / P-8）: 完了画面と同じ注記を**予約する前**にも出す。
+                後から知らされるより、申し込む時点で分かっている方がトラブルにならない。 */}
+            <p className="muted small">※ 当日は会場での価格・税設定でお会計します。上の金額と変わる場合があります。</p>
 
             <label className="field">
               <span className="field-label">ニックネーム（任意）</span>
