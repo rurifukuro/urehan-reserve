@@ -26,6 +26,18 @@ export function ReservePage() {
   const [qty, setQty] = useState<Record<string, number>>({});
   const [nickname, setNickname] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  /** 🔴 Rev88（批判的チェック ラウンド19・班O 重要 O-3／ASYNC-ORDER・MATCH-KEY）
+   *
+   *  「送ったかどうか分からない」状態。タイムアウトや原因不明の失敗は**サーバー側では通っている
+   *  可能性がある**ので、`requestId`（冪等キー）をわざと作り直さずに再送させている。
+   *  ところが旧実装は、その待ちの間も**数量・ニックネームを自由に編集できた**。
+   *  1回目が実はサーバーに届いていた場合、押し直しても同じ冪等キーなので**新しい内容では作られず**、
+   *  サーバーは1回目の予約をそのまま返す。画面はその戻り値ではなく手元の `selected` を
+   *  「確定内訳」として保存・表示するため、**買い手の控えと売り手の一覧が食い違う**
+   *  （買い手は3冊のつもり・売り手には2冊で並ぶ／当日その場で揉める・自動回復しない）。
+   *  → 曖昧な失敗のあいだは内容を凍結する。サーバーが明確に拒否した失敗
+   *    （パスワード違い・限数超過・締切・ページ無し＝**行は作られていない**）は凍結しない。 */
+  const [contentLocked, setContentLocked] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [result, setResult] = useState<CreateReservationResult | null>(null);
   const [orderedItems, setOrderedItems] = useState<ReservedItem[]>([]); // 確定した予約内容（結果表示用）
@@ -89,9 +101,21 @@ export function ReservePage() {
   // 完了画面の合計は確定内訳（orderedItems）から出す。復元表示（Rev12）では qty 状態が空＝total は使えない。
   const orderedTotal = useMemo(() => orderedItems.reduce((s, it) => s + it.price * it.qty, 0), [orderedItems]);
 
-  // Rev3: 受付が締め切られているか。手動締切(is_open=false)に加え、自動〆切(close_at)の定刻を過ぎていたら終了。
-  //   サーバーも create_reservation で同条件を弾く（migration 0020）。ここは押す前に受付終了を見せる表示用ガード。
-  const closed = !!page && (!page.is_open || (page.close_at != null && Date.now() >= page.close_at));
+  // Rev3: 受付が締め切られているか。サーバーも create_reservation で同条件を弾く（migration 0020）。
+  //
+  // 🔴 Rev88（ラウンド19・班O 注意 O-10／CLOCK-TRUST）: **買い手端末の時計で入口を閉じない。**
+  //   旧実装は `Date.now() >= page.close_at` を `is_open` と同列に扱い、真になるとフォームごと
+  //   消していた。`Date.now()` が指すのは**買い手のスマホの時計**で、ズレていれば
+  //   〆切前なのに「締め切られています」しか出ない＝**正規の買い手が締切前に締め出され、
+  //   本人には打つ手が無い**（会場で「予約できない」と言われても売り手側には何も起きていない）。
+  //   時計が遅れている逆側は無害（送信できてサーバーが正しく弾く＝下の 'reservations closed'）。
+  //   ＝**非対称なので、閉じる判断はサーバー由来の値だけで行う。**
+  //   さらに `Date.now()` はレンダー時に1回評価されるだけで、開きっぱなしの画面は定刻を過ぎても
+  //   再評価されない＝この式は元々「閉じ切る」役目を果たしていない（守れていない防御）。
+  const closed = !!page && !page.is_open;
+  // 端末時計では定刻を過ぎている＝**注意書きだけ**出す（送信そのものは止めない。可否はサーバーが決める）。
+  const pastCloseAtByDeviceClock =
+    !!page && page.is_open && page.close_at != null && Date.now() >= page.close_at;
 
   const itemMaxQty = (it: PageItem): number => {
     const limit = it.limitPerPerson;
@@ -99,6 +123,8 @@ export function ReservePage() {
   };
 
   const setItemQty = (key: string, next: number) => {
+    // Rev88（O-3）: 送信結果が不明なあいだは内容を動かさない（冪等キーを持ったまま中身だけ変わるのを防ぐ）。
+    if (contentLocked) return;
     setSubmitError(null);
     const item = items.find((it) => it.key === key);
     const max = item ? itemMaxQty(item) : 99;
@@ -118,13 +144,22 @@ export function ReservePage() {
       setRestoredStale(false);
       // 次の申し込みは別の予約なので冪等キーを作り直す（失敗時は作り直さない＝再送で同じ値が飛ぶ）。
       setRequestId(newRequestId());
+      setContentLocked(false); // Rev88（O-3）: 冪等キーを作り直した＝次は別の予約なので凍結を解く。
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      // 🔴 Rev88（O-3）: 「サーバーが明確に拒否した」失敗（＝予約行は作られていない）だけ内容の凍結を解く。
+      //   このぶら下がりは**下の setSubmitError の分岐と1対1で対応させること**（分岐を足すならここも足す）。
+      const serverRejected =
+        msg.includes('password_required') || msg.includes('password_mismatch')
+        || msg.includes('item_limit_per_person_exceeded') || msg.includes('item_max_qty_exceeded')
+        || msg.includes('reservation_limit_reached') || msg.includes('reservations closed')
+        || msg.includes('page not found');
+      setContentLocked(!serverRejected);
       if (isTimeoutError(e)) {
         // 🔴 Rev84（班E 重要2＋重要3）: タイムアウトは「送れなかった」とは限らず、
         //   サーバー側では通っている可能性がある。冪等キーがあるので押し直しても二重にならない
         //   ＝**もう一度押してよい**ことを明示する（黙って失敗表示だけ出すと諦めて帰る）。
-        setSubmitError('通信が混み合って応答がありません。もう一度「取り置きを予約する」を押してください（二重に予約されることはありません）。');
+        setSubmitError('通信が混み合って応答がありません。もう一度「取り置きを予約する」を押してください（二重に予約されることはありません）。内容は変更できません（変更すると控えと売り手側の一覧が食い違うため）。');
       } else if (msg.includes('password_required') || msg.includes('password_mismatch')) {
         setSubmitError('パスワードが正しくありません。');
       } else if (msg.includes('item_limit_per_person_exceeded')) {
@@ -146,7 +181,8 @@ export function ReservePage() {
       } else if (msg.includes('page not found')) {
         setSubmitError('ページが見つかりませんでした。');
       } else {
-        setSubmitError('予約の送信に失敗しました。通信状況をご確認ください。');
+        // Rev88（O-3）: 原因不明＝サーバーに届いた可能性を否定できない。内容は凍結したまま押し直してもらう。
+        setSubmitError('予約の送信に失敗しました。通信状況をご確認のうえ、もう一度「取り置きを予約する」を押してください（二重に予約されることはありません）。内容は変更できません。');
       }
     } finally {
       setSubmitting(false);
@@ -291,6 +327,14 @@ export function ReservePage() {
 
         {page.note ? <div className="note-box">{page.note}</div> : null}
 
+        {/* Rev88（O-10）: 端末時計が定刻を過ぎているときの注意書き。**閉じない**＝送信はできる。 */}
+        {pastCloseAtByDeviceClock && (
+          <div className="note-box">
+            受付終了の予定時刻を過ぎています。まだ予約できる場合もありますので、そのままお進みください
+            （受け付けられないときは送信後にお知らせします）。
+          </div>
+        )}
+
         {closed ? (
           <div className="closed-box">現在、取り置きの受付は締め切られています。</div>
         ) : items.length === 0 ? (
@@ -323,7 +367,7 @@ export function ReservePage() {
                         className="step-btn"
                         aria-label={`${it.name} を減らす`}
                         onClick={() => setItemQty(it.key, n - 1)}
-                        disabled={n <= 0}
+                        disabled={n <= 0 || contentLocked}
                       >
                         −
                       </button>
@@ -332,7 +376,7 @@ export function ReservePage() {
                         className="step-btn"
                         aria-label={`${it.name} を増やす`}
                         onClick={() => setItemQty(it.key, n + 1)}
-                        disabled={n >= max}
+                        disabled={n >= max || contentLocked}
                       >
                         ＋
                       </button>
@@ -350,6 +394,14 @@ export function ReservePage() {
                 後から知らされるより、申し込む時点で分かっている方がトラブルにならない。 */}
             <p className="muted small">※ 当日は会場での価格・税設定でお会計します。上の金額と変わる場合があります。</p>
 
+            {/* 🔴 Rev88（O-3）: 送信結果が不明なあいだは内容を触らせない。理由を書かないと「壊れている」と見える。 */}
+            {contentLocked && (
+              <p className="muted small">
+                ※ 送信結果の確認中のため、内容は変更できません。そのまま「取り置きを予約する」を押し直してください
+                （二重に予約されることはありません）。内容を変えたいときは、予約が確定してから取り消して取り直してください。
+              </p>
+            )}
+
             <label className="field">
               <span className="field-label">ニックネーム（任意）</span>
               <input
@@ -359,6 +411,7 @@ export function ReservePage() {
                 maxLength={40}
                 placeholder="例: とれはん太郎"
                 onChange={(e) => setNickname(e.target.value)}
+                disabled={contentLocked}
               />
             </label>
             <p className="muted small">
@@ -374,6 +427,7 @@ export function ReservePage() {
                   value={password}
                   placeholder="パスワードを入力"
                   onChange={(e) => setPassword(e.target.value)}
+                  disabled={contentLocked}
                 />
               </label>
             )}
