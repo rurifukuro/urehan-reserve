@@ -12,15 +12,39 @@ function uuidv4(): string {
   });
 }
 
-export function getInstallId(): string {
+/** 送信ごとに1個作る冪等キー（migration 0062 の `p_request_id`）。永続化しない。 */
+export function newRequestId(): string {
+  return uuidv4();
+}
+
+/** 端末IDと、それを**永続化できたかどうか**。
+ *  🔴 Rev84（ラウンド16・班E 要確認8）: 旧実装は保存失敗を黙って握り、毎回別の UUID を返していた。
+ *    `cancel_reservation` は installation_id 一致が条件なので、この端末は
+ *    **リロードした瞬間に自分の取り置きを取り消せなくなる**（取り消しボタンも復元されない）。
+ *    買い手は「行けなくなったので取り消したい」を実行できず、売り手は当日まで在庫を握り続ける。
+ *    直せない環境の制約（プライベートブラウズ等）なので**動作は変えず**、
+ *    「できない」ことを画面で伝えられるように `persisted` を返す（無反応にしない）。 */
+export interface InstallIdState {
+  id: string;
+  /** localStorage へ書けた（＝再訪しても同じIDで取り消せる）か。 */
+  persisted: boolean;
+}
+
+export function getInstallIdState(): InstallIdState {
   try {
     const existing = localStorage.getItem(KEY);
-    if (existing) return existing;
+    if (existing) return { id: existing, persisted: true };
     const id = uuidv4();
     localStorage.setItem(KEY, id);
-    return id;
+    // 書けたつもりでも容量0の実装があるので、読み直して実際に残ったかまで確かめる。
+    return { id, persisted: localStorage.getItem(KEY) === id };
   } catch {
     // localStorage 不可（プライベートブラウズ等）。セッション内一意でフォールバック。
-    return uuidv4();
+    return { id: uuidv4(), persisted: false };
   }
+}
+
+/** 後方互換（ID だけ要る呼び出し用）。 */
+export function getInstallId(): string {
+  return getInstallIdState().id;
 }

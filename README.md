@@ -15,12 +15,12 @@
   「取り置きを予約する」で `create_reservation` を呼び、**受取番号**を発行・表示する。
 - `/` … slug 無しの案内ページ（個別URLからアクセスする旨）。
 
-## 使う RPC（0019）
+## 使う RPC（0019 で新設・0062 で `create_reservation` を差し替え）
 
 | RPC | 用途 |
 | --- | --- |
 | `get_reservation_page(p_slug)` | お品書きページの取得（owner_token_hash は返らない） |
-| `create_reservation(p_slug, p_nickname, p_installation_id, p_items, p_now)` | 予約作成＋受取番号採番（合計はサーバー再計算） |
+| `create_reservation(p_slug, p_nickname, p_installation_id, p_items, p_now, p_password, p_request_id)` | 予約作成＋受取番号採番（合計はサーバー再計算）。**0062 で `p_request_id`（冪等キー）を追加**し、締切判定は端末時計 `p_now` ではなく**サーバーの `now()`** で行う（`p_now` は旧クライアント互換のため受け取るだけで使わない＝CLOCK-TRUST） |
 | `cancel_reservation(p_reservation_id, p_installation_id, p_now)` | 本人キャンセル（installation_id 照合・受取済みは不可） |
 
 ## ローカル開発

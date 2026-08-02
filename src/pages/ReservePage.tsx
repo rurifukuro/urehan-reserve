@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SiteFooter } from '../components/SiteFooter';
 import { useParams } from 'react-router-dom';
 import type { ReservationPage, ReservedItem, CreateReservationResult, PageItem } from '../lib/types';
 import { getReservationPage, createReservation, cancelReservation } from '../lib/api';
-import { getInstallId } from '../lib/installId';
+import { getInstallIdState, newRequestId } from '../lib/installId';
+import { isTimeoutError } from '../lib/fetchTimeout';
 import { saveLastReservation, loadLastReservation, clearLastReservation } from '../lib/lastReservation';
 import { yen } from '../lib/format';
 
@@ -11,10 +12,16 @@ type Load = 'loading' | 'loaded' | 'notfound' | 'error';
 
 export function ReservePage() {
   const { slug = '' } = useParams();
-  const [installId] = useState(() => getInstallId());
+  // 🔴 Rev84（班E 要確認8）: 端末IDを永続化できたかまで受け取る。できていない端末は
+  //   リロード後に自分の取り置きを取り消せないので、その旨を完了画面で伝える（無反応にしない）。
+  const [{ id: installId, persisted: idPersisted }] = useState(() => getInstallIdState());
+  // 🔴 Rev84（班E 重要3）: 冪等キー。**成功するまで同じ値を使い回す**＝送信後に応答が
+  //   電波で落ちて買い手が押し直しても、サーバー（0062）が既存行の受取番号を返すので二重予約にならない。
+  const [requestId, setRequestId] = useState(() => newRequestId());
 
   const [load, setLoad] = useState<Load>('loading');
   const [page, setPage] = useState<ReservationPage | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [qty, setQty] = useState<Record<string, number>>({});
   const [nickname, setNickname] = useState('');
@@ -25,6 +32,8 @@ export function ReservePage() {
   const [cancelled, setCancelled] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [password, setPassword] = useState('');
+  // 保存されていた受取番号が TTL 超過（＝別イベントで使い回された slug かもしれない）か。
+  const [restoredStale, setRestoredStale] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -40,12 +49,17 @@ export function ReservePage() {
         if (saved) {
           setResult({ reservation_id: saved.reservation_id, pickup_no: saved.pickup_no });
           setOrderedItems(saved.items);
+          setRestoredStale(!!saved.stale);
         }
         setLoad('loaded');
       })
       .catch(() => { if (alive) setLoad('error'); });
     return () => { alive = false; };
-  }, [slug]);
+  }, [slug, reloadKey]);
+
+  // 🔴 Rev84（班E 重要2）: 読み込み失敗からの復帰導線。タイムアウトを入れた以上、
+  //   会場回線では「時間を置けば通る」失敗が普通に起きる＝再試行できないと行き止まりになる。
+  const retryLoad = useCallback(() => setReloadKey((k) => k + 1), []);
 
   // 並び順は従来（レジさぽっ！本体）と同じく「セット（bundle）を上・単品（product）を下」。
   // 同種内は公開時の順序を維持する（安定ソート）。selected・完了画面の内訳もこの順に従う。
@@ -97,13 +111,21 @@ export function ReservePage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const r = await createReservation(slug, nickname.trim(), installId, selected, password || undefined);
+      const r = await createReservation(slug, nickname.trim(), installId, selected, requestId, password || undefined);
       saveLastReservation(slug, r, selected); // Rev12: 再訪時に受取番号を再表示できるように保存
       setOrderedItems(selected);
       setResult(r);
+      setRestoredStale(false);
+      // 次の申し込みは別の予約なので冪等キーを作り直す（失敗時は作り直さない＝再送で同じ値が飛ぶ）。
+      setRequestId(newRequestId());
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('password_required') || msg.includes('password_mismatch')) {
+      if (isTimeoutError(e)) {
+        // 🔴 Rev84（班E 重要2＋重要3）: タイムアウトは「送れなかった」とは限らず、
+        //   サーバー側では通っている可能性がある。冪等キーがあるので押し直しても二重にならない
+        //   ＝**もう一度押してよい**ことを明示する（黙って失敗表示だけ出すと諦めて帰る）。
+        setSubmitError('通信が混み合って応答がありません。もう一度「取り置きを予約する」を押してください（二重に予約されることはありません）。');
+      } else if (msg.includes('password_required') || msg.includes('password_mismatch')) {
         setSubmitError('パスワードが正しくありません。');
       } else if (msg.includes('item_limit_per_person_exceeded')) {
         // migration 0026: サーバーが「item_limit_per_person_exceeded: 「品名」はお一人様N点までです（既にX点予約済み、今回Y点追加）」の形で返す。
@@ -143,8 +165,14 @@ export function ReservePage() {
       } else {
         window.alert('取り消せませんでした（すでに受取済みの可能性があります）。');
       }
-    } catch {
-      window.alert('取り消しに失敗しました。');
+    } catch (e) {
+      // 🔴 Rev84（班E 重要2）: タイムアウトは再試行で通ることが多い。取り消し自体は
+      //   status を cancelled にするだけで何度実行しても同じ結果＝押し直して安全。
+      window.alert(
+        isTimeoutError(e)
+          ? '通信が混み合って応答がありません。少し待ってからもう一度お試しください。'
+          : '取り消しに失敗しました。',
+      );
     } finally {
       setCancelling(false);
     }
@@ -172,6 +200,8 @@ export function ReservePage() {
         <div className="card narrow">
           <div className="brand">🎫 取り置き予約</div>
           <p className="muted">読み込みに失敗しました。通信状況をご確認のうえ、再度お試しください。</p>
+          {/* 🔴 Rev84（班E 重要2）: 再試行導線。会場回線では「時間を置けば通る」失敗が普通に起きる。 */}
+          <button className="btn-primary" onClick={retryLoad}>再読み込み</button>
           <SiteFooter />
         </div>
       </Centered>
@@ -214,10 +244,26 @@ export function ReservePage() {
                   （黙って違う額を請求すると、その場で「話が違う」になる）。 */}
               <p className="muted small">※ 当日は会場での価格・税設定でお会計します。上の金額と変わる場合があります。</p>
               {page.note ? <div className="note-box">{page.note}</div> : null}
+              {/* 🔴 Rev84（班E 注意6）: TTL 超過でも消さずに注記だけ添える（消すと復旧不能・注記は可逆）。 */}
+              {restoredStale && (
+                <p className="warn-box">
+                  ⚠️ この受取番号は保存から時間が経っています。別のイベントのものかもしれませんので、
+                  当日ブースでご確認ください。
+                </p>
+              )}
               <p className="warn-box">
                 ⚠️ 同じ端末・ブラウザでこのページを開き直すと受取番号を再表示できます。
                 別の端末で見る場合に備えて、スクリーンショットの保存もおすすめします。
               </p>
+              {/* 🔴 Rev84（班E 要確認8）: 端末IDを保存できない環境（プライベートブラウズ等）は、
+                  ページを開き直した時点で取り消しができなくなる。無反応にせず先に伝える。 */}
+              {!idPersisted && (
+                <p className="warn-box">
+                  ⚠️ このブラウザでは予約情報を保存できません（プライベートブラウズ等）。
+                  このページを閉じると受取番号の再表示と取り消しができなくなります。
+                  必ずスクリーンショットを保存し、取り消しが必要な場合は当日ブースでお申し出ください。
+                </p>
+              )}
 
               {/* とれはんっ！連携（項目3）: 予約したサークルの頒布物を、買い手向けアプリ「とれはんっ！」の
                   自分のお品書きリストにそのまま登録できる導線。ディープリンク torehan://reserve?slug=… で起動し、

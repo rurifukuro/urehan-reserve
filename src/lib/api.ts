@@ -20,11 +20,21 @@ export async function getReservationPage(slug: string): Promise<ReservationPage 
 }
 
 // 予約を作成して受取番号を採番。合計はサーバー側で再計算される（クライアント値は信用されない）。
+//
+// 🔴 Rev84（ラウンド16・班E 重要3／冪等）: `requestId` は**送信ごとに1個**で、
+//   通信失敗による再送では**同じ値**を送る。サーバー（migration 0062）は同じ
+//   (page_id, request_id) の予約があれば新規作成せず既存行の受取番号を返す。
+//   これが無いと「サーバーは INSERT を commit したが応答が電波で落ちた」ときの再送で
+//   二重予約になり、在庫が二重に押さえられる（当日渡せない取り置きが生まれる）。
+//
+// 🔴 Rev84（重要1／CLOCK-TRUST）: `p_now` は互換のため送るが**サーバーは使わない**（0062）。
+//   締切判定と保存時刻はサーバー時計に統一した。ここを消すと旧サーバーで動かなくなるので残す。
 export async function createReservation(
   slug: string,
   nickname: string,
   installId: string,
   items: ReservedItem[],
+  requestId: string,
   password?: string,
 ): Promise<CreateReservationResult> {
   const { data, error } = await supabase.rpc('create_reservation', {
@@ -34,7 +44,12 @@ export async function createReservation(
     p_items: items,
     p_now: Date.now(),
     p_password: password || null,
+    p_request_id: requestId,
   });
+  // ⚠ デプロイ順序: migration 0062（`p_request_id` 付き）を**先に**本番へ適用してから
+  //   この Web をデプロイすること。逆順にすると旧サーバーが引数を知らず PGRST202 で全滅する。
+  //   ここで PGRST202 を握って旧シグネチャへ落とすことは**しない**——落とせば冪等性が失われ、
+  //   再送で二重予約に戻る（塞いだ穴が黙って開くより、送信できない方が被害が小さい）。
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as CreateReservationResult[];
   const row = rows[0];
