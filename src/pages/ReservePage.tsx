@@ -304,6 +304,9 @@ export function ReservePage() {
                 const limitTag = it.limitPerPerson != null && it.limitPerPerson > 0
                   ? `（お一人様${it.limitPerPerson}点まで）` : null;
                 // 頒布上限（maxQty）は表示しない（在庫数を買い手に見せない・Rev10）。ステッパーの上限制御は max で維持
+                // 🔴 Rev86（ラウンド17・重要 I-4／migration 0064(B)）: maxQty は**サーバーからも来なくなった**
+                //   （`get_reservation_page` が items から落とす）。表示しないだけでは DevTools から読めていた。
+                //   `max`（= itemMaxQty）は limitPerPerson だけで決まるので、ここの挙動は変わらない。
                 return (
                   <li key={it.key} className="item">
                     <div className="item-main">
