@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { supabase, isTrustedStorageUrl } from './supabase';
 import type { ReservationPage, ReservedItem, CreateReservationResult } from './types';
 
 // slug からお品書きページを取得（security definer RPC・owner_token_hash は返らない）。
@@ -14,7 +14,15 @@ export async function getReservationPage(slug: string): Promise<ReservationPage 
   return {
     ...row,
     items: Array.isArray(row.items) ? row.items : [],
-    oshinagaki_urls: Array.isArray(row.oshinagaki_urls) ? row.oshinagaki_urls : [],
+    // 🔴 Rev87（ラウンド18・班J 重要 J-1）: **オリジンを検証してから取り込む**。
+    //   この配列は anon が書ける列から来る＝任意ドメインを入れられる。`<img src>`（ReservePage.tsx:464,482）
+    //   に流れる前の唯一の境界がここ。通す判定はこの 1 箇所に置く（表示側で弾く形にすると、
+    //   別の表示経路が増えたときに素通りする）。詳細は `isTrustedStorageUrl` のコメント。
+    oshinagaki_urls: Array.isArray(row.oshinagaki_urls)
+      ? row.oshinagaki_urls.filter(
+          (u): u is string => typeof u === 'string' && u.length > 0 && isTrustedStorageUrl(u),
+        )
+      : [],
     close_at: closeAt != null && Number.isFinite(closeAt) ? closeAt : null,
   };
 }
