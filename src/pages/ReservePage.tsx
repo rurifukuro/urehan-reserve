@@ -14,6 +14,34 @@ type Load = 'loading' | 'loaded' | 'notfound' | 'error';
  *  片方だけ変えると「入力できたのに黙って切られる」（＝買い手は伝えたつもりで伝わっていない）。 */
 const NOTE_MAX_LEN = 200;
 
+/** 🔴 Rev156: 備考欄の**出荷フラグ**。true にするまで入力欄を出さず、備考も送らない。
+ *
+ *  ── なぜ機能そのものを作ってから隠すのか ──────────────────────────────
+ *  備考を**読んで売り手に見せる**のはレジさぽっ！アプリ側の予約管理画面
+ *  （`urehan/src/components/ReservationManagerModal.tsx`・Rev151）であって、
+ *  この Web ではない。ここは「買い手が書く場所」でしかない。
+ *  つまり **Web を先に出すと、書かれた備考の行き先が無い**:
+ *    - サーバー（0113）は受け取って保存する＝**エラーにならない**。
+ *    - 旧版アプリは `buyer_note` を読まない＝売り手の画面には**何も出ない**。
+ *    - 買い手には「送れた」ように見える＝**当日「備考に書いたのに」で揉める**。
+ *  失敗が一切表に出ないので、こちらも買い手も気づく手掛かりが無い。
+ *
+ *  ── 2026-08-26 時点の実測（これが false である根拠）──────────────────
+ *  レジさぽっ！ `app.json` の `version` は **1.0.6**。備考を読む Rev151 を含む版は
+ *  **まだビルドすらされていない**（`git log -S'"version"' -- app.json` は Rev1 の1件だけ
+ *  ＝一度も繰り上げていない）。**備考を読めるアプリは1台も存在しない**。
+ *
+ *  ── true にしてよい条件 ────────────────────────────────────────
+ *  ① Rev151 を含む版（1.0.7 以降）が **iOS / Android の両ストアで配信中**であること。
+ *  ② 配信開始から日が経ち、旧版が実質的に入れ替わっていること
+ *     （ストア更新は強制ではない＝「配信した＝全員が新版」ではない）。
+ *  ③ ①②を**実測で確かめる**（R74＝ストアの現在の状態は記憶に無い。ASC / Play を API で数える）。
+ *  逆方向（アプリを先に出す）は無害＝新版アプリは `buyer_note` が null なら何も表示しないだけ。
+ *
+ *  ⚠ この定数を消して JSX を直に戻さないこと。戻すと上の順序制約が**コードから消える**。
+ */
+const SHOW_BUYER_NOTE = false;
+
 export function ReservePage() {
   const { slug = '' } = useParams();
   // 🔴 Rev84（班E 要確認8）: 端末IDを永続化できたかまで受け取る。できていない端末は
@@ -149,7 +177,10 @@ export function ReservePage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const note = buyerNote.trim();
+      // 🔴 Rev156: フラグが false のあいだは**送らない**。入力欄を隠すだけだと、
+      //   state に残った値（将来 true→false と戻した場合や、開発中に触った場合）が
+      //   そのままサーバーへ飛びうる＝「画面に無いのに保存されている」経路を作らない。
+      const note = SHOW_BUYER_NOTE ? buyerNote.trim() : '';
       const r = await createReservation(
         slug, nickname.trim(), installId, selected, requestId, password || undefined, note || undefined,
       );
@@ -445,24 +476,30 @@ export function ReservePage() {
 
             {/* 0113: 買い手からの備考（任意）。サークル側（レジさぽっ！アプリ）の予約一覧に表示される。
                 🔴 `disabled={contentLocked}` は Rev88（O-3）と同じ理由＝送信結果が不明な間に書き換えると、
-                   冪等キーで返ってきた1回目の予約（＝古い備考）と手元の控えが食い違う。 */}
-            <label className="field">
-              <span className="field-label">備考（任意）</span>
-              <textarea
-                className="input textarea"
-                value={buyerNote}
-                maxLength={NOTE_MAX_LEN}
-                rows={3}
-                placeholder="例: 15時ごろに伺います／お釣りのないようにお持ちします"
-                onChange={(e) => setBuyerNote(e.target.value)}
-                disabled={contentLocked}
-              />
-            </label>
-            <span className="field-count">{buyerNote.length} / {NOTE_MAX_LEN}</span>
-            <p className="muted small">
-              ※ 受け渡しに関するご要望などがあればご記入ください。サークルの方に表示されます。
-              個人情報（お名前・連絡先・住所など）は書かないでください。
-            </p>
+                   冪等キーで返ってきた1回目の予約（＝古い備考）と手元の控えが食い違う。
+                🔴 Rev156: `SHOW_BUYER_NOTE` が false のあいだは**欄ごと出さない**
+                   （理由と解除条件は定義側の docblock）。 */}
+            {SHOW_BUYER_NOTE && (
+              <>
+                <label className="field">
+                  <span className="field-label">備考（任意）</span>
+                  <textarea
+                    className="input textarea"
+                    value={buyerNote}
+                    maxLength={NOTE_MAX_LEN}
+                    rows={3}
+                    placeholder="例: 15時ごろに伺います／お釣りのないようにお持ちします"
+                    onChange={(e) => setBuyerNote(e.target.value)}
+                    disabled={contentLocked}
+                  />
+                </label>
+                <span className="field-count">{buyerNote.length} / {NOTE_MAX_LEN}</span>
+                <p className="muted small">
+                  ※ 受け渡しに関するご要望などがあればご記入ください。サークルの方に表示されます。
+                  個人情報（お名前・連絡先・住所など）は書かないでください。
+                </p>
+              </>
+            )}
 
             {page.has_password && (
               <label className="field">
