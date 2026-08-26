@@ -10,6 +10,10 @@ import { yen } from '../lib/format';
 
 type Load = 'loading' | 'loaded' | 'notfound' | 'error';
 
+/** 備考の上限。🔴 サーバー側 migration 0113 の `left(coalesce(p_buyer_note,''), 200)` と同じ値。
+ *  片方だけ変えると「入力できたのに黙って切られる」（＝買い手は伝えたつもりで伝わっていない）。 */
+const NOTE_MAX_LEN = 200;
+
 export function ReservePage() {
   const { slug = '' } = useParams();
   // 🔴 Rev84（班E 要確認8）: 端末IDを永続化できたかまで受け取る。できていない端末は
@@ -25,6 +29,13 @@ export function ReservePage() {
 
   const [qty, setQty] = useState<Record<string, number>>({});
   const [nickname, setNickname] = useState('');
+  /** 0113: 買い手からの備考（任意）。上限はサーバー（`create_reservation`）と同じ 200 文字。
+   *  🔴 `maxLength` は入力の親切であって防御ではない（DevTools でも別クライアントでも外せる）
+   *    ＝**切るのはサーバー側**。ここの数字はあくまで「切られる前に気づかせる」ためのもの。 */
+  const [buyerNote, setBuyerNote] = useState('');
+  /** 確定した備考（結果表示用）。`orderedItems` と同じ立て付け＝
+   *  **入力中の値ではなく「送った値」**を控えとして見せる（送信後に入力欄を触られてもズレない）。 */
+  const [orderedNote, setOrderedNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   /** 🔴 Rev88（批判的チェック ラウンド19・班O 重要 O-3／ASYNC-ORDER・MATCH-KEY）
    *
@@ -61,6 +72,7 @@ export function ReservePage() {
         if (saved) {
           setResult({ reservation_id: saved.reservation_id, pickup_no: saved.pickup_no });
           setOrderedItems(saved.items);
+          setOrderedNote(saved.buyer_note ?? ''); // 0113: 無い版で保存された古い控えは空になるだけ
           setRestoredStale(!!saved.stale);
         }
         setLoad('loaded');
@@ -137,9 +149,13 @@ export function ReservePage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const r = await createReservation(slug, nickname.trim(), installId, selected, requestId, password || undefined);
-      saveLastReservation(slug, r, selected); // Rev12: 再訪時に受取番号を再表示できるように保存
+      const note = buyerNote.trim();
+      const r = await createReservation(
+        slug, nickname.trim(), installId, selected, requestId, password || undefined, note || undefined,
+      );
+      saveLastReservation(slug, r, selected, note); // Rev12: 再訪時に受取番号を再表示できるように保存
       setOrderedItems(selected);
+      setOrderedNote(note);
       setResult(r);
       setRestoredStale(false);
       // 次の申し込みは別の予約なので冪等キーを作り直す（失敗時は作り直さない＝再送で同じ値が飛ぶ）。
@@ -279,6 +295,15 @@ export function ReservePage() {
                   請求額はここの表示と変わる。仕様としてそう決めた以上、**買い手に先に伝えておく**
                   （黙って違う額を請求すると、その場で「話が違う」になる）。 */}
               <p className="muted small">※ 当日は会場での価格・税設定でお会計します。上の金額と変わる場合があります。</p>
+              {/* 0113: 自分が送った備考の控え。サークル側の見え方と揃えるためではなく、
+                  **買い手が「ちゃんと伝わったか」を確かめられるようにする**ため
+                  （この画面以外に確認する手段が無い＝ログインも履歴も無い）。 */}
+              {orderedNote ? (
+                <>
+                  <p className="muted small" style={{ marginBottom: 4 }}>お送りした備考</p>
+                  <div className="mynote-box">{orderedNote}</div>
+                </>
+              ) : null}
               {page.note ? <div className="note-box">{page.note}</div> : null}
               {/* 🔴 Rev84（班E 注意6）: TTL 超過でも消さずに注記だけ添える（消すと復旧不能・注記は可逆）。 */}
               {restoredStale && (
@@ -416,6 +441,27 @@ export function ReservePage() {
             </label>
             <p className="muted small">
               ※ お名前・連絡先などは取得しません。受け渡しは当日の受取番号で行います。
+            </p>
+
+            {/* 0113: 買い手からの備考（任意）。サークル側（レジさぽっ！アプリ）の予約一覧に表示される。
+                🔴 `disabled={contentLocked}` は Rev88（O-3）と同じ理由＝送信結果が不明な間に書き換えると、
+                   冪等キーで返ってきた1回目の予約（＝古い備考）と手元の控えが食い違う。 */}
+            <label className="field">
+              <span className="field-label">備考（任意）</span>
+              <textarea
+                className="input textarea"
+                value={buyerNote}
+                maxLength={NOTE_MAX_LEN}
+                rows={3}
+                placeholder="例: 15時ごろに伺います／お釣りのないようにお持ちします"
+                onChange={(e) => setBuyerNote(e.target.value)}
+                disabled={contentLocked}
+              />
+            </label>
+            <span className="field-count">{buyerNote.length} / {NOTE_MAX_LEN}</span>
+            <p className="muted small">
+              ※ 受け渡しに関するご要望などがあればご記入ください。サークルの方に表示されます。
+              個人情報（お名前・連絡先・住所など）は書かないでください。
             </p>
 
             {page.has_password && (

@@ -44,6 +44,9 @@ export async function createReservation(
   items: ReservedItem[],
   requestId: string,
   password?: string,
+  // 0113: 買い手からの備考（任意）。**送らなくても通る**＝DEFAULT NULL の引数なので、
+  //   この Web を出す前の版（7引数）も同じ関数で解決される。
+  buyerNote?: string,
 ): Promise<CreateReservationResult> {
   const { data, error } = await supabase.rpc('create_reservation', {
     p_slug: slug,
@@ -53,9 +56,14 @@ export async function createReservation(
     p_now: Date.now(),
     p_password: password || null,
     p_request_id: requestId,
+    // 🔴 空文字は送らず null にする。サーバー側も `nullif(btrim(...),'')` で null へ寄せているが、
+    //   ここで '' を送ると「備考あり（中身は空）」に見える経路が1つ増える＝表現を1つに保つ。
+    p_buyer_note: buyerNote && buyerNote.trim() ? buyerNote : null,
   });
-  // ⚠ デプロイ順序: migration 0062（`p_request_id` 付き）を**先に**本番へ適用してから
-  //   この Web をデプロイすること。逆順にすると旧サーバーが引数を知らず PGRST202 で全滅する。
+  // ⚠ デプロイ順序: migration 0062（`p_request_id` 付き）／0113（`p_buyer_note` 付き）を
+  //   **先に**本番へ適用してからこの Web をデプロイすること。
+  //   逆順にすると旧サーバーが引数を知らず PGRST202 で全滅する。
+  //   （0113 は 2026-08-26 に本番適用済み＝旧7引数・新8引数の両方で解決されることを実測している）
   //   ここで PGRST202 を握って旧シグネチャへ落とすことは**しない**——落とせば冪等性が失われ、
   //   再送で二重予約に戻る（塞いだ穴が黙って開くより、送信できない方が被害が小さい）。
   if (error) throw new Error(error.message);

@@ -13,6 +13,9 @@ export interface SavedReservation {
   reservation_id: string;
   pickup_no: number;
   items: ReservedItem[]; // 確定した予約内訳（完了画面の再表示用スナップショット）
+  /** 0113: 送信した備考。**画面へ復元して見せるためだけ**に持つ（サーバーの値を取り直す口は無い）。
+   *  無い版で保存された古い値もそのまま読めるように任意にする。 */
+  buyer_note?: string;
   savedAt: number; // epoch ms
   /** 保存から TTL を超えている（＝別イベントの使い回しかもしれない）。表示はするが注記を添える。 */
   stale?: boolean;
@@ -22,12 +25,15 @@ export function saveLastReservation(
   slug: string,
   result: CreateReservationResult,
   items: ReservedItem[],
+  buyerNote?: string,
 ): void {
   try {
     const data: SavedReservation = {
       reservation_id: result.reservation_id,
       pickup_no: result.pickup_no,
       items,
+      // 空文字は入れない（`buyer_note` が無い＝備考なし、で表現を1つに保つ＝api.ts と同じ扱い）。
+      ...(buyerNote && buyerNote.trim() ? { buyer_note: buyerNote } : {}),
       savedAt: Date.now(),
     };
     localStorage.setItem(PREFIX + slug, JSON.stringify(data));
@@ -45,6 +51,8 @@ export function loadLastReservation(slug: string): SavedReservation | null {
     if (typeof v.reservation_id !== 'string' || typeof v.pickup_no !== 'number' || !Array.isArray(v.items)) {
       return null;
     }
+    // 0113: 備考は任意。**型が違えば黙って捨てる**（復元の失敗で受取番号ごと消さない）。
+    if (typeof v.buyer_note !== 'string') delete v.buyer_note;
     // 🔴 Rev84（ラウンド16・班E 注意6／CLOCK-TRUST）: 旧実装は TTL 超過で**消していた**。
     //   savedAt は買い手端末の時計で打っており、時計が狂っている（あるいは手動で進めた）だけで
     //   当日ブースの前で受取番号が消える。買い手は番号を提示できず、取り消しボタンも
