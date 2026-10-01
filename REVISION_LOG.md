@@ -509,3 +509,35 @@ Rev181 を含む）を両ストアへ出す作業が続くこと。Rev156 が警
 
 - `npm run build`（`tsc -b && vite build`）＝**EXIT=0**
 - 本番反映は `.github/workflows/deploy.yml`（`main` への push でトリガ）
+
+## Rev220（2026-10-01）— とれはんっ！LP への案内リンクに `?src=urehan_reserve` を付ける
+
+### 指示
+
+ユーザー質問 verbatim「**今ってレジさぽっ！の取り置きページ経由でとれはんっ！をDLした人って別に分かるようになってる？**」
+→ 調査結果（区別できない）と1行の是正案を示し、ユーザー verbatim「**デプロイ進めてOK**」。
+
+### 変更前の挙動（書き出し）
+
+- 予約完了画面の「とれはんっ！を入手する」（未起動フォールバック）と「アプリをお持ちでない方・〜」の2リンクは
+  `https://rurifukuro.github.io/torehan/` へ飛ぶ。`?src=` 無し＋`rel="noreferrer"`。
+- LP 側（`rurifukuro.github.io/public/analytics.js`）は `src` が無いので閲覧記録の `p_src` が null、
+  ストアボタンの App Store `ct` ／ Play `utm_source` は既定値 `portal`＝**直打ち・ブックマーク等と同じ扱い**。
+
+### 変更ファイル
+
+- `src/pages/ReservePage.tsx` … `TOREHAN_PORTAL` を `https://rurifukuro.github.io/torehan/?src=urehan_reserve` へ（理由のコメントつき）。
+  `rel="noreferrer"` とディープリンク（`torehan://reserve?…`）は変えていない。
+- `REVISION_LOG.md` … 本節
+
+### 効果（反映後の分だけ。過去分は遡れない）
+
+- LP 閲覧記録の src 列＝`urehan_reserve`
+- App Store キャンペーンリンク `ct=urehan_reserve`（ASC の獲得 → キャンペーン）
+- Play `referrer=utm_source=urehan_reserve&utm_medium=portal`
+- アプリの再提出は不要（Web のみの変更。とれはんっ！／レジさぽっ！どちらのバイナリにも触れない）。
+
+### 動作確認
+
+- `npm run build`（`tsc -b && vite build`）＝**EXIT=0**・バンドル `index-CZnOw_c7.js` に `torehan/?src=urehan_reserve` を確認
+- 本番反映は `.github/workflows/deploy.yml`（`main` への push でトリガ）

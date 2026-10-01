@@ -550,7 +550,10 @@ export function ReservePage() {
 // とれはんっ！起動 CTA（項目3）。予約完了画面の下部に置く。
 // ディープリンク（torehan://reserve?slug=…）は <a href> で開く＝モバイルのカスタムスキーム起動が最も確実。
 // アプリ未導入の人向けに、ポータル（rurifukuro.github.io/torehan/）への案内リンクも併記する。
-const TOREHAN_PORTAL = 'https://rurifukuro.github.io/torehan/';
+// ?src= は LP の計測（rurifukuro.github.io の analytics.js）が読む流入元＝閲覧記録の src 列と、
+// ストアボタンの App Store ct ／ Play utm_source に同じ値が載る。これが無いと取り置き経由の DL を
+// 他の LP 流入（直打ち・ブックマーク）と区別できない（rel="noreferrer" で参照元も残らないため）。
+const TOREHAN_PORTAL = 'https://rurifukuro.github.io/torehan/?src=urehan_reserve';
 function TorehanCta({ slug, rno, orderedItems }: { slug: string; rno: number; orderedItems: ReservedItem[] }) {
   // items= は key:qty のカンマ区切り（例: pA:2,bB:1）。とれはんっ！側で予約個数を反映する。
   const itemsParam = orderedItems.length > 0
