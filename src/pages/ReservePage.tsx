@@ -219,7 +219,7 @@ export function ReservePage() {
         msg.includes('password_required') || msg.includes('password_mismatch')
         || msg.includes('item_limit_per_person_exceeded') || msg.includes('item_max_qty_exceeded')
         || msg.includes('reservation_limit_reached') || msg.includes('reservations closed')
-        || msg.includes('page not found');
+        || msg.includes('page not found') || msg.includes('item_not_in_catalog');
       setContentLocked(!serverRejected);
       if (isTimeoutError(e)) {
         // 🔴 Rev84（班E 重要2＋重要3）: タイムアウトは「送れなかった」とは限らず、
@@ -240,6 +240,14 @@ export function ReservePage() {
         setSubmitError(detail && detail !== msg
           ? detail
           : '一部の品物が予約頒布上限に達しました。');
+      } else if (msg.includes('item_not_in_catalog')) {
+        // 🔴 Rev226（批判的チェック R6-03）: ページを開いた後に売り手が頒布物を差し替えた／消したとき
+        //   （migration 0113 L198）。旧実装は「原因不明」の分岐に落ち、**内容を凍結したまま押し直し**を促していた
+        //   ＝何度押しても同じ理由で拒否され続け、予約できないまま帰ってしまう。
+        const detail = msg.replace(/^.*item_not_in_catalog:\s*/, '').trim();
+        setSubmitError(detail && detail !== msg
+          ? detail
+          : '頒布物の内容が変更されました。ページを開き直してください。');
       } else if (msg.includes('reservation_limit_reached')) {
         setSubmitError('予約が上限に達しました。');
       } else if (msg.includes('reservations closed')) {

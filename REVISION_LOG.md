@@ -541,3 +541,10 @@ Rev181 を含む）を両ストアへ出す作業が続くこと。Rev156 が警
 
 - `npm run build`（`tsc -b && vite build`）＝**EXIT=0**・バンドル `index-CZnOw_c7.js` に `torehan/?src=urehan_reserve` を確認
 - 本番反映は `.github/workflows/deploy.yml`（`main` への push でトリガ）
+
+## Rev226 — 予約の拒否理由「頒布物の内容が変更されました」を出し分ける（批判的チェック R6-03）（2026-10-02）
+
+- `src/pages/ReservePage.tsx` … サーバーの `item_not_in_catalog`（とれはんっ！ migration 0113 L198）を `serverRejected` に足し、専用の分岐でサーバーの文言を表示する。
+  旧実装は「原因不明」に落ちて内容を凍結したまま押し直しを促していた＝同じ理由で拒否され続ける。
+- 検証: `npx tsc --noEmit -p tsconfig.app.json` 0。**未デプロイ**（`main` への push で公開＝WEB9・許可制）。
+- 本体の記録は urehan `REVISION_LOG.md` Rev226。
