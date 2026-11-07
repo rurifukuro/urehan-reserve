@@ -548,3 +548,11 @@ Rev181 を含む）を両ストアへ出す作業が続くこと。Rev156 が警
   旧実装は「原因不明」に落ちて内容を凍結したまま押し直しを促していた＝同じ理由で拒否され続ける。
 - 検証: `npx tsc --noEmit -p tsconfig.app.json` 0。**未デプロイ**（`main` への push で公開＝WEB9・許可制）。
 - 本体の記録は urehan `REVISION_LOG.md` Rev226。
+
+## Rev243 — とれはんっ！へのディープリンクに予約ID（rid=）を付ける（2026-11-07）
+
+- `src/pages/ReservePage.tsx` … 完了画面の「とれはんっ！で開く」の `torehan://reserve?…` に `&rid=<reservation_id>` を足した。
+  とれはんっ！が「抽選結果のお知らせ」プッシュをこの予約に紐づけるため（とれはんっ！ migration 0157 `reservation_push_links`・本体 Rev241/242 の決定8）。
+- rid は推測できない32桁の乱数。取り消しには端末IDの一致も要る＝rid だけでは取り消せない。旧版のとれはんっ！は知らない引数を読まないだけ。
+- 検証: `npx tsc --noEmit -p tsconfig.app.json` 0。**未デプロイ**（`main` への push で公開＝WEB9・許可制）。
+- 本体の記録は urehan `REVISION_LOG.md` Rev243。

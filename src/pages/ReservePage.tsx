@@ -387,7 +387,7 @@ export function ReservePage() {
               {/* とれはんっ！連携（項目3）: 予約したサークルの頒布物を、買い手向けアプリ「とれはんっ！」の
                   自分のお品書きリストにそのまま登録できる導線。ディープリンク torehan://reserve?slug=… で起動し、
                   未インストールの場合の案内（ポータル）も併記する。 */}
-              <TorehanCta slug={slug} rno={result.pickup_no} orderedItems={orderedItems} />
+              <TorehanCta slug={slug} rno={result.pickup_no} rid={result.reservation_id} orderedItems={orderedItems} />
 
               <button className="btn-ghost" onClick={onCancel} disabled={cancelling}>
                 {cancelling ? '取り消し中…' : 'この取り置きを取り消す'}
@@ -562,12 +562,16 @@ export function ReservePage() {
 // ストアボタンの App Store ct ／ Play utm_source に同じ値が載る。これが無いと取り置き経由の DL を
 // 他の LP 流入（直打ち・ブックマーク）と区別できない（rel="noreferrer" で参照元も残らないため）。
 const TOREHAN_PORTAL = 'https://rurifukuro.github.io/torehan/?src=urehan_reserve';
-function TorehanCta({ slug, rno, orderedItems }: { slug: string; rno: number; orderedItems: ReservedItem[] }) {
+function TorehanCta({ slug, rno, rid, orderedItems }: { slug: string; rno: number; rid: string; orderedItems: ReservedItem[] }) {
   // items= は key:qty のカンマ区切り（例: pA:2,bB:1）。とれはんっ！側で予約個数を反映する。
   const itemsParam = orderedItems.length > 0
     ? `&items=${encodeURIComponent(orderedItems.map((it) => `${it.key}:${it.qty}`).join(','))}`
     : '';
-  const deepLink = `torehan://reserve?slug=${encodeURIComponent(slug)}&rno=${rno}${itemsParam}`;
+  // Rev243: rid= は予約ID。とれはんっ！が「抽選結果のお知らせ」プッシュを、この予約に紐づけて届けるために使う
+  //   （とれはんっ！ migration 0157 `reservation_push_links`・本体 urehan Rev241/242 の決定8）。
+  //   推測できない 32 桁の乱数＝これを知っていても取り消しはできない（取り消しは端末IDの一致も要る）。
+  const ridParam = rid ? `&rid=${encodeURIComponent(rid)}` : '';
+  const deepLink = `torehan://reserve?slug=${encodeURIComponent(slug)}&rno=${rno}${ridParam}${itemsParam}`;
   const [showFallback, setShowFallback] = useState(false);
 
   // <a href> によるカスタムスキーム遷移はそのまま走らせる（preventDefault しない＝モバイルで最も確実）。
