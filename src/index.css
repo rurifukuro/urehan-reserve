@@ -412,3 +412,64 @@ body {
 }
 .site-footer p { margin: 0; }
 .site-footer a { color: var(--primary-dark); }
+
+/* 0158: 取り置き限定の抽選（予約ページ・完了画面）。文字色はコントラスト比 4.5 以上の値で選んだ（DS24）。 */
+.lottery-red-note {
+  margin: 4px 0 8px;
+  color: #b23b3b; /* 白地で 5.86 */
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.lottery-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #c2185b; /* 白文字で 5.87 */
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.7;
+  vertical-align: 1px;
+}
+.item-lottery { flex-wrap: wrap; }
+.item-lottery .item-main { flex: 1 1 55%; }
+.item-lottery .lottery-action { order: 1; flex: none; }
+.item-lottery .item-limits,
+.item-lottery .lottery-sub { order: 2; flex-basis: 100%; margin: 0; }
+.lottery-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.lottery-check input { width: 20px; height: 20px; accent-color: var(--primary-dark); }
+.lottery-state {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #f1f1f4;
+  color: #5f5f6b; /* 5.58 */
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.item-locked { opacity: 0.85; }
+.lottery-result {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #fff3e0;
+  color: #8a5300; /* 5.77 */
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.lottery-result-won { background: #e8f5e9; color: #1b5e20; } /* 7.0 */
+.lottery-result-lost,
+.lottery-result-void { background: #f1f1f4; color: #5f5f6b; }
+.btn-inline {
+  width: auto;
+  margin: 8px 0 0;
+  padding: 6px 14px;
+  display: block;
+}

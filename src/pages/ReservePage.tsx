@@ -1,14 +1,61 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SiteFooter } from '../components/SiteFooter';
 import { useParams } from 'react-router-dom';
-import type { ReservationPage, ReservedItem, CreateReservationResult, PageItem } from '../lib/types';
-import { getReservationPage, createReservation, cancelReservation } from '../lib/api';
+import type {
+  ReservationPage, ReservedItem, CreateReservationResult, PageItem,
+  LotteryPublicItem, MyReservation, MyReservationItem, MyLotteryEntry, LotteryResult,
+} from '../lib/types';
+import {
+  getReservationPage, createReservation, cancelReservation,
+  getReservationLotteryPublic, getMyReservation, updateReservationQty,
+} from '../lib/api';
 import { getInstallIdState, newRequestId } from '../lib/installId';
 import { isTimeoutError } from '../lib/fetchTimeout';
-import { saveLastReservation, loadLastReservation, clearLastReservation } from '../lib/lastReservation';
+import {
+  saveLastReservation, loadLastReservation, clearLastReservation, updateLastReservationItems,
+  type SavedLotteryEntry,
+} from '../lib/lastReservation';
 import { yen } from '../lib/format';
 
 type Load = 'loading' | 'loaded' | 'notfound' | 'error';
+
+/** 0158: 抽選の読み込み状態。🔴 失敗しても通常の予約はできる（抽選の商品だけ「読み込めませんでした」）。 */
+type LotteryLoad = 'loading' | 'loaded' | 'error';
+
+/** 0158: 完了画面で読む「自分の取り置きの最新状態」（get_my_reservation）の読み込み状態。
+ *  notfound＝サーバーが null を返した（端末IDが変わった・別の端末で予約した など）。 */
+type MyResLoad = 'idle' | 'loading' | 'loaded' | 'notfound' | 'error';
+
+/** 0158: 予約ページでの抽選商品の状態。
+ *  open＝「応募する」を選べる／auto＝おまけ（指定商品の取り置きで自動応募）／closed＝受付終了／drawn＝抽選済み。 */
+type LotteryState = 'open' | 'auto' | 'closed' | 'drawn';
+
+/** 0158（決定14）: 抽選商品があるページだけ、一覧の上に赤字で出す文言。完了画面の個数修正でも同じ文言を使う。 */
+const LOTTERY_NO_EDIT_NOTE = '抽選の商品は、応募後・当選後とも個数を直せません（辞退は取り消しのみ）';
+
+const LOTTERY_RESULT_LABEL: Record<LotteryResult, string> = {
+  pending: '抽選待ち',
+  won: '当選',
+  lost: '落選',
+  void: '無効',
+};
+
+/** 締切などの日時（買い手に見せる表示だけ。判断には使わない）。 */
+function fmtDateTime(ms: number): string {
+  try {
+    return new Date(ms).toLocaleString('ja-JP', {
+      month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
+/** サーバーの `code: 日本語の詳細` から詳細を取り出す。取れなければ fallback（旧サーバー・想定外の形）。 */
+function serverDetail(msg: string, code: string, fallback: string): string {
+  const detail = msg.replace(new RegExp(`^.*${code}:\\s*`), '').trim();
+  return detail && detail !== msg ? detail : fallback;
+}
 
 /** 備考の上限。🔴 サーバー側 migration 0113 の `left(coalesce(p_buyer_note,''), 200)` と同じ値。
  *  片方だけ変えると「入力できたのに黙って切られる」（＝買い手は伝えたつもりで伝わっていない）。 */
@@ -105,14 +152,45 @@ export function ReservePage() {
   // 保存されていた受取番号が TTL 超過（＝別イベントで使い回された slug かもしれない）か。
   const [restoredStale, setRestoredStale] = useState(false);
 
+  // ── 0158: 取り置き限定の抽選 ──
+  const [lotteries, setLotteries] = useState<LotteryPublicItem[]>([]);
+  const [lotteryLoad, setLotteryLoad] = useState<LotteryLoad>('loading');
+  /** 「応募する」にチェックした抽選商品の key。 */
+  const [entered, setEntered] = useState<Record<string, boolean>>({});
+  /** 送信結果が不明（contentLocked）のあいだの再送では、1回目に送った抽選の key をそのまま送る
+   *  （冪等キーが同じなのに中身が変わると、控えと売り手側の一覧が食い違う＝Rev88 O-3 と同じ理由）。 */
+  const sentLotteryKeysRef = useRef<string[]>([]);
+  /** 応募した抽選の控え（完了画面でサーバーが読めないときに「応募済み」として出す写し）。 */
+  const [orderedLottery, setOrderedLottery] = useState<SavedLotteryEntry[]>([]);
+  /** 完了画面: 自分の取り置きの最新状態（抽選の結果・個数の修正の反映先）。 */
+  const [myRes, setMyRes] = useState<MyReservation | null>(null);
+  const [myResLoad, setMyResLoad] = useState<MyResLoad>('idle');
+  const [myResKey, setMyResKey] = useState(0);
+  /** 完了画面: 個数の修正。 */
+  const [editing, setEditing] = useState(false);
+  const [editQty, setEditQty] = useState<Record<string, number>>({});
+  const [updating, setUpdating] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editDone, setEditDone] = useState(false);
+
   useEffect(() => {
     let alive = true;
     setLoad('loading');
+    setLotteryLoad('loading');
+    // 0158: 抽選は並行して読む。ページの表示は抽選の結果を待ってから＝「抽選の商品なのにステッパーが出て、
+    //   あとから差し替わる」瞬間を作らない。抽選が失敗してもページは出す（通常の予約はできる）。
+    const lotteryP = getReservationLotteryPublic(slug).then(
+      (v) => ({ ok: true as const, v }),
+      () => ({ ok: false as const }),
+    );
     getReservationPage(slug)
-      .then((p) => {
+      .then(async (p) => {
         if (!alive) return;
         if (!p) { setLoad('notfound'); return; }
+        const lr = await lotteryP;
+        if (!alive) return;
         setPage(p);
+        if (lr.ok) { setLotteries(lr.v); setLotteryLoad('loaded'); } else { setLotteries([]); setLotteryLoad('error'); }
         // Rev12（提案1）: この端末で予約済みなら完了画面（受取番号）を復元する。
         //   「受取番号を控え忘れた」「ページを閉じてしまった」の救済。キャンセル成功時に消える。
         const saved = loadLastReservation(slug);
@@ -120,6 +198,7 @@ export function ReservePage() {
           setResult({ reservation_id: saved.reservation_id, pickup_no: saved.pickup_no });
           setOrderedItems(saved.items);
           setOrderedNote(saved.buyer_note ?? ''); // 0113: 無い版で保存された古い控えは空になるだけ
+          setOrderedLottery(saved.lottery ?? []); // 0158: 無い版で保存された古い控えは空になるだけ
           setRestoredStale(!!saved.stale);
         }
         setLoad('loaded');
@@ -131,6 +210,35 @@ export function ReservePage() {
   // 🔴 Rev84（班E 重要2）: 読み込み失敗からの復帰導線。タイムアウトを入れた以上、
   //   会場回線では「時間を置けば通る」失敗が普通に起きる＝再試行できないと行き止まりになる。
   const retryLoad = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  // 0158: 抽選だけを読み直す（読み込み失敗からの復帰・抽選の設定が変わったと分かったとき）。
+  const refreshLottery = useCallback(() => {
+    setLotteryLoad('loading');
+    getReservationLotteryPublic(slug)
+      .then((v) => { setLotteries(v); setLotteryLoad('loaded'); })
+      .catch(() => { setLotteries([]); setLotteryLoad('error'); });
+  }, [slug]);
+
+  // 0158: 完了画面（再訪時の復元も同じ）で、自分の取り置きの最新状態を読む。
+  const resultId = result?.reservation_id ?? null;
+  useEffect(() => {
+    if (load !== 'loaded' || !resultId) return;
+    let alive = true;
+    setMyResLoad('loading');
+    getMyReservation(slug, resultId, installId)
+      .then((r) => {
+        if (!alive) return;
+        if (!r) { setMyRes(null); setMyResLoad('notfound'); return; }
+        setMyRes(r);
+        setMyResLoad('loaded');
+        // 取り消し済み（買い手・売り手の取り消し、または購入権の落選で何も残らなかった）＝
+        //   手で取り消したとき（onCancel）と同じく控えを消す。今回の画面には取り消し表示と抽選の結果を出す。
+        if (r.status === 'cancelled') clearLastReservation(slug);
+      })
+      .catch(() => { if (alive) setMyResLoad('error'); });
+    return () => { alive = false; };
+  }, [load, resultId, slug, installId, myResKey]);
+  const retryMyRes = useCallback(() => setMyResKey((k) => k + 1), []);
 
   // 並び順は従来（レジさぽっ！本体）と同じく「セット（bundle）を上・単品（product）を下」。
   // 同種内は公開時の順序を維持する（安定ソート）。selected・完了画面の内訳もこの順に従う。
@@ -149,12 +257,29 @@ export function ReservePage() {
     return [...deduped].sort((a, b) => rank(a.kind) - rank(b.kind));
   }, [page]);
 
+  // 0158: 抽選の設定を key で引く。カタログに無い key の抽選は出さない（一覧は items が正）。
+  const lotteryByKey = useMemo(() => {
+    const m = new Map<string, LotteryPublicItem>();
+    for (const l of lotteries) m.set(l.key, l);
+    return m;
+  }, [lotteries]);
+  const nameByKey = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const it of items) m.set(it.key, it.name);
+    return m;
+  }, [items]);
+  /** このページに（カタログ上の）抽選商品があるか＝朱記（決定14）と「当選分は別途」の注記を出す条件。 */
+  const hasLotteryItems = useMemo(() => items.some((it) => lotteryByKey.has(it.key)), [items, lotteryByKey]);
+
+  // 🔴 0158: 抽選の商品は items に入れない（サーバーが lottery_item_in_items で弾く）。
+  //   抽選の読み込みに失敗したときは区別できない＝全部ステッパーのまま（サーバーが弾いたら文言で知らせる）。
   const selected: ReservedItem[] = useMemo(
     () =>
       items
+        .filter((it) => !lotteryByKey.has(it.key))
         .map((it) => ({ key: it.key, name: it.name, price: it.price, qty: qty[it.key] ?? 0 }))
         .filter((it) => it.qty > 0),
-    [items, qty],
+    [items, qty, lotteryByKey],
   );
   const total = useMemo(() => selected.reduce((s, it) => s + it.price * it.qty, 0), [selected]);
   // 完了画面の合計は確定内訳（orderedItems）から出す。復元表示（Rev12）では qty 状態が空＝total は使えない。
@@ -181,6 +306,37 @@ export function ReservePage() {
     return (limit != null && limit > 0) ? limit : 99;
   };
 
+  /** 0158: 抽選商品の状態。drawn（抽選済み）はサーバーの値。
+   *  締切は「予約ページに合わせる」ならページの受付状態（サーバー由来の is_open）で、
+   *  「日時を指定」なら deadlineAt と端末の時計で見る（get_reservation_lottery_public は締切後かどうかを返さない）。
+   *  🔴 端末の時計を使うのはここだけ＝最終の可否はサーバー（lottery_closed）が決める。判断待ちに列挙済み。 */
+  const lotteryState = (l: LotteryPublicItem): LotteryState => {
+    if (l.drawn) return 'drawn';
+    if (l.deadlineMode === 'page' && closed) return 'closed';
+    if (l.deadlineMode === 'at' && l.deadlineAt != null && Date.now() >= l.deadlineAt) return 'closed';
+    if (l.kind === 'bonus' && l.bonusTarget === 'holders') return 'auto';
+    return 'open';
+  };
+
+  const lotteryDeadlineText = (l: LotteryPublicItem): string => {
+    if (l.deadlineMode === 'at' && l.deadlineAt != null) return fmtDateTime(l.deadlineAt);
+    return page?.close_at != null ? `${fmtDateTime(page.close_at)}（予約の受付終了まで）` : '予約の受付終了まで';
+  };
+
+  /** 今「応募する」にチェックが入っていて、まだ受付中の抽選の key（送る候補）。 */
+  const checkedOpenLotteryKeys = (): string[] =>
+    items
+      .filter((it) => entered[it.key])
+      .map((it) => lotteryByKey.get(it.key))
+      .filter((l): l is LotteryPublicItem => !!l && lotteryState(l) === 'open')
+      .map((l) => l.key);
+
+  const toggleEntered = (key: string, on: boolean) => {
+    if (contentLocked) return; // Rev88（O-3）と同じ＝送信結果が不明なあいだは内容を動かさない
+    setSubmitError(null);
+    setEntered((prev) => ({ ...prev, [key]: on }));
+  };
+
   const setItemQty = (key: string, next: number) => {
     // Rev88（O-3）: 送信結果が不明なあいだは内容を動かさない（冪等キーを持ったまま中身だけ変わるのを防ぐ）。
     if (contentLocked) return;
@@ -192,7 +348,19 @@ export function ReservePage() {
 
   const onSubmit = async () => {
     if (!page) return;
-    if (selected.length === 0) { setSubmitError('予約する品物を1つ以上選んでください。'); return; }
+    // 0158: 送る抽選の key。送信結果が不明な再送では1回目と同じものを送る（Rev88 O-3）。
+    const lotteryKeys = contentLocked ? sentLotteryKeysRef.current : checkedOpenLotteryKeys();
+    const purchaseKeys = lotteryKeys.filter((k) => lotteryByKey.get(k)?.kind === 'purchase');
+    if (selected.length === 0 && purchaseKeys.length === 0) {
+      // 🔴 0158（決定16）: おまけだけの応募は送る前に止める（サーバーも lottery_bonus_only で弾く）。
+      setSubmitError(lotteryKeys.length > 0
+        ? 'おまけの抽選だけでは応募できません。ほかの商品を選ぶか、購入権の抽選に応募してください。'
+        : hasLotteryItems
+          ? '予約する品物を1つ以上選ぶか、抽選に応募してください。'
+          : '予約する品物を1つ以上選んでください。');
+      return;
+    }
+    sentLotteryKeysRef.current = lotteryKeys;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -201,11 +369,20 @@ export function ReservePage() {
       //   そのままサーバーへ飛びうる＝「画面に無いのに保存されている」経路を作らない。
       const note = SHOW_BUYER_NOTE ? buyerNote.trim() : '';
       const r = await createReservation(
-        slug, nickname.trim(), installId, selected, requestId, password || undefined, note || undefined,
+        slug, nickname.trim(), installId, selected, requestId, password || undefined, note || undefined, lotteryKeys,
       );
-      saveLastReservation(slug, r, selected, note); // Rev12: 再訪時に受取番号を再表示できるように保存
+      const lotterySnap: SavedLotteryEntry[] = lotteryKeys.flatMap((k) => {
+        const l = lotteryByKey.get(k);
+        return l ? [{ key: k, name: nameByKey.get(k) ?? k, kind: l.kind, qty: l.qtyPerWinner }] : [];
+      });
+      saveLastReservation(slug, r, selected, note, lotterySnap); // Rev12: 再訪時に受取番号を再表示できるように保存
       setOrderedItems(selected);
       setOrderedNote(note);
+      setOrderedLottery(lotterySnap);
+      setMyRes(null);
+      setMyResLoad('idle');
+      setEntered({});
+      sentLotteryKeysRef.current = [];
       setResult(r);
       setRestoredStale(false);
       // 次の申し込みは別の予約なので冪等キーを作り直す（失敗時は作り直さない＝再送で同じ値が飛ぶ）。
@@ -219,8 +396,19 @@ export function ReservePage() {
         msg.includes('password_required') || msg.includes('password_mismatch')
         || msg.includes('item_limit_per_person_exceeded') || msg.includes('item_max_qty_exceeded')
         || msg.includes('reservation_limit_reached') || msg.includes('reservations closed')
-        || msg.includes('page not found') || msg.includes('item_not_in_catalog');
+        || msg.includes('page not found') || msg.includes('item_not_in_catalog')
+        // 0158: 抽選の拒否（どれも予約行を作る前に raise する＝行は作られていない）。下の分岐と1対1。
+        || msg.includes('lottery_keys_invalid') || msg.includes('lottery_installation_required')
+        || msg.includes('lottery_item_in_items') || msg.includes('lottery_not_found')
+        || msg.includes('lottery_closed') || msg.includes('lottery_auto_entry')
+        || msg.includes('lottery_already_entered') || msg.includes('lottery_bonus_only');
       setContentLocked(!serverRejected);
+      // 0158: 抽選の設定が読み込み後に変わった（締切・種類の変更・削除・抽選済み）と分かる拒否では、
+      //   抽選だけ読み直して一覧を今の設定に合わせる（チェックの出し分け・送る key の絞り込みが追従する）。
+      if (msg.includes('lottery_item_in_items') || msg.includes('lottery_not_found')
+          || msg.includes('lottery_closed') || msg.includes('lottery_auto_entry')) {
+        refreshLottery();
+      }
       if (isTimeoutError(e)) {
         // 🔴 Rev84（班E 重要2＋重要3）: タイムアウトは「送れなかった」とは限らず、
         //   サーバー側では通っている可能性がある。冪等キーがあるので押し直しても二重にならない
@@ -248,6 +436,28 @@ export function ReservePage() {
         setSubmitError(detail && detail !== msg
           ? detail
           : '頒布物の内容が変更されました。ページを開き直してください。');
+      } else if (msg.includes('lottery_item_in_items')) {
+        // 0158: 抽選の商品を通常の個数で送った（抽選の読み込みに失敗した・読み込み後に抽選へ変わった）。
+        setSubmitError(serverDetail(msg, 'lottery_item_in_items',
+          '抽選の商品は応募で受け付けています。ページを開き直してください。'));
+      } else if (msg.includes('lottery_not_found')) {
+        setSubmitError(serverDetail(msg, 'lottery_not_found',
+          '抽選の内容が変更されました。ページを開き直してください。'));
+      } else if (msg.includes('lottery_closed')) {
+        setSubmitError(`${serverDetail(msg, 'lottery_closed', '抽選の受付は終了しました。')}`
+          + '（その抽選の「応募する」を外して、もう一度お送りください）');
+      } else if (msg.includes('lottery_auto_entry')) {
+        setSubmitError(serverDetail(msg, 'lottery_auto_entry',
+          'この抽選は、対象の商品を取り置きした方が自動で応募されます。'));
+      } else if (msg.includes('lottery_already_entered')) {
+        setSubmitError(`${serverDetail(msg, 'lottery_already_entered', 'すでに応募済みの抽選があります。')}`
+          + '（その抽選の「応募する」を外して、もう一度お送りください）');
+      } else if (msg.includes('lottery_bonus_only')) {
+        setSubmitError('おまけの抽選だけでは応募できません。ほかの商品を選ぶか、購入権の抽選に応募してください。');
+      } else if (msg.includes('lottery_installation_required')) {
+        setSubmitError('このブラウザでは抽選に応募するための情報を用意できませんでした。ページを開き直してください。');
+      } else if (msg.includes('lottery_keys_invalid')) {
+        setSubmitError('抽選の応募内容を送れませんでした。ページを開き直してください。');
       } else if (msg.includes('reservation_limit_reached')) {
         setSubmitError('予約が上限に達しました。');
       } else if (msg.includes('reservations closed')) {
@@ -272,6 +482,8 @@ export function ReservePage() {
       if (ok) {
         clearLastReservation(slug); // Rev12: 取り消した予約の番号は再表示しない
         setCancelled(true);
+        setEditing(false);
+        retryMyRes(); // 0158: 抽選の応募も無効になる＝結果の表示を読み直す（「抽選待ち」のまま残さない）
       } else {
         window.alert('取り消せませんでした（すでに受取済みの可能性があります）。');
       }
@@ -285,6 +497,88 @@ export function ReservePage() {
       );
     } finally {
       setCancelling(false);
+    }
+  };
+
+  // ── 0158: 完了画面の個数の修正 ──────────────────────────
+  /** 個数を直せない行＝抽選の当選分（lottery の印あり）と、今は抽選の商品になっている key（サーバーも lottery_item_locked で弾く）。 */
+  const isLockedLine = (it: MyReservationItem) => !!it.lottery || lotteryByKey.has(it.key);
+
+  /** 修正のステッパー上限。カタログに在る商品は買い手の上限（limitPerPerson・無ければ 99）、ただし今の個数は下回らない。
+   *  カタログから消えた商品は今の個数まで（＝減らすだけ。増やすとサーバーが item_not_in_catalog で弾く）。
+   *  🔴 上限の最終判断はサーバー（他の取り置きとの合算・在庫）。 */
+  const editMaxQty = (it: MyReservationItem): number => {
+    const cat = items.find((c) => c.key === it.key);
+    return cat ? Math.max(itemMaxQty(cat), it.qty) : it.qty;
+  };
+
+  const startEdit = () => {
+    if (!myRes) return;
+    const init: Record<string, number> = {};
+    for (const it of myRes.items) if (!isLockedLine(it)) init[it.key] = it.qty;
+    setEditQty(init);
+    setEditError(null);
+    setEditDone(false);
+    setEditing(true);
+  };
+
+  const onUpdateQty = async () => {
+    if (!myRes || !result) return;
+    // 変えた行だけ送る（送らなかった行はサーバーがそのまま残す）。
+    const changes: { key: string; qty: number }[] = [];
+    for (const it of myRes.items) {
+      const q = editQty[it.key];
+      if (!isLockedLine(it) && q != null && q !== it.qty) changes.push({ key: it.key, qty: q });
+    }
+    if (changes.length === 0) { setEditing(false); return; }
+    setUpdating(true);
+    setEditError(null);
+    try {
+      const r = await updateReservationQty(slug, result.reservation_id, installId, changes);
+      setMyRes((prev) => (prev ? { ...prev, items: r.items, total_price: r.total_price } : prev));
+      // 控え（lastReservation）も直す＝再訪時の表示・とれはんっ！への受け渡し（items=）を今の個数に合わせる。
+      const plain: ReservedItem[] = r.items
+        .filter((it) => !it.lottery)
+        .map((it) => ({ key: it.key, name: it.name, price: it.price, qty: it.qty }));
+      updateLastReservationItems(slug, plain);
+      setOrderedItems(plain);
+      setEditing(false);
+      setEditDone(true);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isTimeoutError(e)) {
+        // 個数の修正は「この個数にする」指定＝押し直しても二重には増えない。
+        setEditError('通信が混み合って応答がありません。もう一度「この内容で更新」を押してください（同じ個数に直すだけなので、二重に増えることはありません）。');
+      } else if (msg.includes('reservation_not_editable')) {
+        setEditError('受け取り済み、または取り消し済みのため、個数を直せません。');
+        setEditing(false);
+        retryMyRes();
+      } else if (msg.includes('reservation not found')) {
+        setEditError('この取り置きが見つかりませんでした。予約したときと同じ端末・ブラウザでお試しください。');
+      } else if (msg.includes('lottery_item_locked')) {
+        setEditError(serverDetail(msg, 'lottery_item_locked', '抽選の商品は個数を変更できません。'));
+        retryMyRes();
+      } else if (msg.includes('item_not_in_reservation')) {
+        setEditError('取り置きの内容が変わっています。最新の内容を読み直しましたので、もう一度お試しください。');
+        setEditing(false);
+        retryMyRes();
+      } else if (msg.includes('item_limit_per_person_exceeded')) {
+        setEditError(serverDetail(msg, 'item_limit_per_person_exceeded', '一部の品物が一人当たりの限数を超えています。'));
+      } else if (msg.includes('item_max_qty_exceeded')) {
+        setEditError(serverDetail(msg, 'item_max_qty_exceeded', '一部の品物が予約頒布上限に達しました。'));
+      } else if (msg.includes('item_not_in_catalog')) {
+        setEditError(serverDetail(msg, 'item_not_in_catalog', '頒布物の内容が変更されました。ページを開き直してください。'));
+      } else if (msg.includes('reservation_would_be_empty')) {
+        setEditError(serverDetail(msg, 'reservation_would_be_empty', 'すべての商品を 0 にする場合は取り消してください。'));
+      } else if (msg.includes('qty_invalid')) {
+        setEditError('個数の指定が正しくありません。');
+      } else if (msg.includes('page not found')) {
+        setEditError('ページが見つかりませんでした。');
+      } else {
+        setEditError('個数を直せませんでした。通信状況をご確認のうえ、もう一度お試しください。');
+      }
+    } finally {
+      setUpdating(false);
     }
   };
 
@@ -320,12 +614,56 @@ export function ReservePage() {
 
   // ── 予約完了画面（受取番号） ───────────────────────────
   if (result) {
+    // 0158: サーバーの最新状態（get_my_reservation）が読めたらそれを正とし、読めないあいだは手元の控えを出す。
+    const live = myResLoad === 'loaded' && myRes ? myRes : null;
+    const isCancelled = cancelled || live?.status === 'cancelled';
+    const isCollected = live?.status === 'collected';
+    const lostPurchase = !!live && live.lottery.some((e) => e.kind === 'purchase' && e.result === 'lost');
+    // 抽選の行（結果つき）。読めないあいだは控えから「応募済み」として出す（結果はまだ分からない）。
+    const lotteryRows: { key: string; name: string; kind: MyLotteryEntry['kind']; qty: number; label: string; result: LotteryResult | null }[] =
+      live
+        ? live.lottery.map((e) => ({ key: e.key, name: e.name, kind: e.kind, qty: e.qty, label: LOTTERY_RESULT_LABEL[e.result], result: e.result }))
+        : orderedLottery.map((e) => ({ key: e.key, name: e.name, kind: e.kind, qty: e.qty, label: '応募済み', result: null }));
+    const summaryItems: MyReservationItem[] = live ? live.items : orderedItems;
+    const shownTotal = live ? live.total_price : orderedTotal;
+    const hasPendingPurchase = live
+      ? live.lottery.some((e) => e.kind === 'purchase' && e.result === 'pending')
+      : orderedLottery.some((e) => e.kind === 'purchase');
+    const canEdit = !!live && live.status === 'pending' && !isCancelled && live.items.some((it) => !isLockedLine(it));
+
+    const lotteryList = lotteryRows.length > 0 ? (
+      <>
+        <p className="muted small" style={{ marginBottom: 4 }}>抽選の応募</p>
+        <ul className="summary">
+          {lotteryRows.map((e) => (
+            <li key={`lot-${e.key}`}>
+              <span className="s-name">
+                <span className="lottery-badge">抽選</span>
+                {e.name}
+                <span className="muted small">（{e.kind === 'purchase' ? '購入権' : 'おまけ'}）</span>
+              </span>
+              <span className="s-qty">×{e.qty}</span>
+              <span className={`lottery-result${e.result ? ` lottery-result-${e.result}` : ''}`}>{e.label}</span>
+            </li>
+          ))}
+        </ul>
+      </>
+    ) : null;
+
     return (
       <div className="page">
         <div className="card">
           <div className="brand">🎫 取り置き完了</div>
-          {cancelled ? (
-            <div className="cancelled-box">この取り置きは取り消されました。</div>
+          {isCancelled ? (
+            <>
+              <div className="cancelled-box">
+                {!cancelled && lostPurchase
+                  ? '購入権の抽選に落選し、ほかに取り置きの商品が残らなかったため、この取り置きは取り消されました。'
+                  : 'この取り置きは取り消されました。'}
+              </div>
+              {/* 抽選の結果はサーバーの最新状態が読めたときだけ（控えの「応募済み」を取り消し後に出さない）。 */}
+              {live ? lotteryList : null}
+            </>
           ) : (
             <>
               <p className="muted small">当日、ブースでこの受取番号をお伝えください。</p>
@@ -335,19 +673,106 @@ export function ReservePage() {
               </div>
               <CircleHeader page={page} />
               <OshinagakiGallery urls={page.oshinagaki_urls} />
-              <ul className="summary">
-                {orderedItems.map((it) => (
-                  <li key={it.key}>
-                    <span className="s-name">{it.name}</span>
-                    <span className="s-qty">×{it.qty}</span>
-                    <span className="s-price">{yen(it.price * it.qty)}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="total-row">
-                <span>合計</span>
-                <span className="total-amount">{yen(orderedTotal)}</span>
-              </div>
+
+              {/* 0158: 最新状態を読めなかったとき。控えは出したまま、読み直せるようにする。 */}
+              {myResLoad === 'error' && (
+                <div className="note-box">
+                  最新の状態（抽選の結果など）を読み込めませんでした。下は予約したときの控えです。
+                  <button className="btn-ghost btn-inline" onClick={retryMyRes}>再読み込み</button>
+                </div>
+              )}
+              {myResLoad === 'notfound' && (
+                <div className="note-box">
+                  この端末・ブラウザでは最新の状態（抽選の結果など）を確認できませんでした。下は予約したときの控えです。
+                </div>
+              )}
+              {isCollected && <div className="note-box">この取り置きは受け取り済みです。</div>}
+
+              {editing && live ? (
+                <>
+                  {/* 0158（決定10・14）: 抽選の行は直せない＝ステッパーを出さず、赤字で理由を出す。 */}
+                  <ul className="items">
+                    {live.items.map((it) => {
+                      if (isLockedLine(it)) {
+                        return (
+                          <li key={it.key} className="item item-locked">
+                            <div className="item-main">
+                              <span className="item-name"><span className="lottery-badge">抽選</span>{it.name}</span>
+                              <span className="item-price">×{it.qty}</span>
+                            </div>
+                          </li>
+                        );
+                      }
+                      const n = editQty[it.key] ?? it.qty;
+                      const max = editMaxQty(it);
+                      return (
+                        <li key={it.key} className="item">
+                          <div className="item-main">
+                            <span className="item-name">{it.name}</span>
+                            <span className="item-price">{yen(it.price)}</span>
+                          </div>
+                          <div className="stepper">
+                            <button
+                              className="step-btn"
+                              aria-label={`${it.name} を減らす`}
+                              onClick={() => setEditQty((p) => ({ ...p, [it.key]: Math.max(0, n - 1) }))}
+                              disabled={n <= 0 || updating}
+                            >
+                              −
+                            </button>
+                            <span className="step-n">{n}</span>
+                            <button
+                              className="step-btn"
+                              aria-label={`${it.name} を増やす`}
+                              onClick={() => setEditQty((p) => ({ ...p, [it.key]: Math.min(max, n + 1) }))}
+                              disabled={n >= max || updating}
+                            >
+                              ＋
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {(lotteryRows.length > 0 || live.items.some((it) => isLockedLine(it))) && (
+                    <p className="lottery-red-note">{LOTTERY_NO_EDIT_NOTE}</p>
+                  )}
+                  <p className="muted small">※ 0 にした商品は取り置きから外れます。個数の上限は送信時にあらためて確認します。</p>
+                  {editError ? <div className="error-box">{editError}</div> : null}
+                  <button className="btn-primary" onClick={onUpdateQty} disabled={updating}>
+                    {updating ? '更新中…' : 'この内容で更新'}
+                  </button>
+                  <button className="btn-ghost" onClick={() => { setEditing(false); setEditError(null); }} disabled={updating}>
+                    やめる
+                  </button>
+                </>
+              ) : (
+                <>
+                  <ul className="summary">
+                    {summaryItems.map((it) => (
+                      <li key={it.key}>
+                        <span className="s-name">
+                          {it.lottery ? <span className="lottery-badge">当選</span> : null}
+                          {it.name}
+                        </span>
+                        <span className="s-qty">×{it.qty}</span>
+                        <span className="s-price">{yen(it.price * it.qty)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {lotteryList}
+                  <div className="total-row">
+                    <span>合計</span>
+                    <span className="total-amount">{yen(shownTotal)}</span>
+                  </div>
+                  {hasPendingPurchase && <p className="muted small">※ 抽選の当選分は別途（当選すると取り置きに加わります）。</p>}
+                  {editDone && <p className="muted small">個数を更新しました。</p>}
+                  {editError ? <div className="error-box">{editError}</div> : null}
+                  {canEdit && (
+                    <button className="btn-ghost" onClick={startEdit}>個数を直す</button>
+                  )}
+                </>
+              )}
               {/* 🔴 Rev83（V-6 / P-8・ユーザー決定 2026-08-02＝「当日はレジの現在価格で会計する」）:
                   取り置きは金額を固定しない＝サークル側が公開後に価格や税設定を変えれば、当日の
                   請求額はここの表示と変わる。仕様としてそう決めた以上、**買い手に先に伝えておく**
@@ -424,8 +849,62 @@ export function ReservePage() {
           <p className="muted">公開されている品物がありません。</p>
         ) : (
           <>
+            {/* 0158: 抽選の読み込みに失敗。どの商品が抽選かは分からない＝通常の予約は続けられることを伝え、読み直せるようにする。 */}
+            {lotteryLoad === 'error' && (
+              <div className="note-box">
+                抽選の情報を読み込めませんでした。抽選の商品には今は応募できません（通常の商品は予約できます）。
+                <button className="btn-ghost btn-inline" onClick={refreshLottery}>再読み込み</button>
+              </div>
+            )}
+            {/* 🔴 0158（決定14）: 抽選の商品があるページだけ、一覧の上に朱記。 */}
+            {hasLotteryItems && <p className="lottery-red-note">{LOTTERY_NO_EDIT_NOTE}</p>}
             <ul className="items">
               {items.map((it) => {
+                const lot = lotteryByKey.get(it.key);
+                if (lot) {
+                  // 0158: 抽選の商品＝ステッパーを出さない。🔴 応募数は出さない（決定19・サーバーも返さない）。
+                  const st = lotteryState(lot);
+                  const sourceNames = lot.bonusTarget === 'holders'
+                    ? lot.bonusSourceKeys.map((k) => nameByKey.get(k)).filter((v): v is string => !!v)
+                    : [];
+                  return (
+                    <li key={it.key} className="item item-lottery">
+                      <div className="item-main">
+                        <span className="item-name"><span className="lottery-badge">抽選</span>{it.name}</span>
+                        <span className="item-price">{lot.kind === 'bonus' ? 'おまけ（無料）' : yen(it.price)}</span>
+                      </div>
+                      <div className="item-limits">
+                        <span className="limit-tag">{lot.kind === 'purchase' ? '購入権の抽選' : 'おまけの抽選'}</span>
+                        <span className="limit-tag">当選 {lot.winners}名</span>
+                        <span className="limit-tag">当選者1人あたり {lot.qtyPerWinner}点</span>
+                        <span className="limit-tag">締切 {lotteryDeadlineText(lot)}</span>
+                      </div>
+                      {lot.kind === 'bonus' && st === 'open' && (
+                        <p className="muted small lottery-sub">※ おまけの抽選だけでは応募できません（ほかの商品の取り置きが必要です）。</p>
+                      )}
+                      {st === 'auto' && sourceNames.length > 0 && (
+                        <p className="muted small lottery-sub">対象の商品: {sourceNames.join('、')}</p>
+                      )}
+                      <div className="lottery-action">
+                        {st === 'open' ? (
+                          <label className="lottery-check">
+                            <input
+                              type="checkbox"
+                              checked={!!entered[it.key]}
+                              onChange={(e) => toggleEntered(it.key, e.target.checked)}
+                              disabled={contentLocked}
+                            />
+                            応募する
+                          </label>
+                        ) : st === 'auto' ? (
+                          <span className="muted small">対象の商品を取り置きすると自動で応募されます</span>
+                        ) : (
+                          <span className="lottery-state">{st === 'drawn' ? '抽選済み' : '受付終了'}</span>
+                        )}
+                      </div>
+                    </li>
+                  );
+                }
                 const n = qty[it.key] ?? 0;
                 const max = itemMaxQty(it);
                 const limitTag = it.limitPerPerson != null && it.limitPerPerson > 0
@@ -473,6 +952,8 @@ export function ReservePage() {
               <span>合計</span>
               <span className="total-amount">{yen(total)}</span>
             </div>
+            {/* 0158: 合計は抽選以外の商品だけ（当選するかは抽選まで分からない）。 */}
+            {hasLotteryItems && <p className="muted small">※ 抽選の当選分は別途（上の合計には含みません）。</p>}
             {/* 🔴 Rev83（V-6 / P-8）: 完了画面と同じ注記を**予約する前**にも出す。
                 後から知らされるより、申し込む時点で分かっている方がトラブルにならない。 */}
             <p className="muted small">※ 当日は会場での価格・税設定でお会計します。上の金額と変わる場合があります。</p>

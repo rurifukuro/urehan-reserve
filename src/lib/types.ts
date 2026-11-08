@@ -43,3 +43,66 @@ export interface CreateReservationResult {
   reservation_id: string;
   pickup_no: number;
 }
+
+// ── 0158: 取り置き限定の抽選 ─────────────────────────────────────────
+
+/** 抽選の種類。purchase＝購入権（当選者だけ取り置きできる）／bonus＝おまけ（無料で当たる）。 */
+export type LotteryKind = 'purchase' | 'bonus';
+
+/** get_reservation_lottery_public の1要素（予約ページに出す抽選の設定）。
+ *  🔴 応募数は**サーバーが返さない**（決定19）＝この型にも持たせない。`winners` は設定した当選数。 */
+export interface LotteryPublicItem {
+  key: string;
+  kind: LotteryKind;
+  /** おまけだけ。optin＝「応募する」を選んだ人／holders＝指定した商品を取り置きした人（自動応募）。 */
+  bonusTarget: 'optin' | 'holders' | null;
+  bonusSourceKeys: string[];
+  winners: number;
+  qtyPerWinner: number;
+  /** page＝予約ページの締切に合わせる／at＝日時を指定（deadlineAt）。 */
+  deadlineMode: 'page' | 'at';
+  deadlineAt: number | null;
+  drawn: boolean;
+  drawnAt: number | null;
+}
+
+/** 抽選の応募の結果。void＝無効（設定の変更・取り置きの取り消しで外れた応募）。 */
+export type LotteryResult = 'pending' | 'won' | 'lost' | 'void';
+
+/** get_my_reservation の lottery の1要素（自分の応募）。 */
+export interface MyLotteryEntry {
+  key: string;
+  kind: LotteryKind;
+  name: string;
+  price: number;
+  qty: number;
+  result: LotteryResult;
+  drawn_at: number | null;
+}
+
+/** 取り置きの商品の行。抽選の当選分は `lottery` に種類が入る（個数の修正では触れない印）。 */
+export interface MyReservationItem extends ReservedItem {
+  lottery?: LotteryKind;
+}
+
+export type ReservationStatus = 'pending' | 'collected' | 'cancelled';
+
+/** get_my_reservation の戻り値（自分の取り置き＋抽選の結果）。 */
+export interface MyReservation {
+  reservation_id: string;
+  pickup_no: number;
+  nickname: string;
+  items: MyReservationItem[];
+  total_price: number;
+  status: ReservationStatus;
+  buyer_note: string | null;
+  created_at: number;
+  updated_at: number;
+  lottery: MyLotteryEntry[];
+}
+
+/** update_reservation_qty の戻り値。 */
+export interface UpdateReservationQtyResult {
+  items: MyReservationItem[];
+  total_price: number;
+}

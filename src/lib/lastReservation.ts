@@ -2,7 +2,7 @@
 //   予約成功時に slug 単位で localStorage へ保存し、同じ端末・ブラウザで再訪したときに
 //   完了画面（受取番号＋内訳）を復元する。キャンセル成功時に削除する。
 //   installId.ts と同じく localStorage 不可（プライベートブラウズ等）でも例外を握らず動作継続。
-import type { CreateReservationResult, ReservedItem } from './types';
+import type { CreateReservationResult, LotteryKind, ReservedItem } from './types';
 
 const PREFIX = 'urehan_reserve_last_v1:';
 // イベントはせいぜい数週間先まで＝30日を過ぎたら「古い可能性がある」と**注記を添えて表示**する
@@ -16,9 +16,20 @@ export interface SavedReservation {
   /** 0113: 送信した備考。**画面へ復元して見せるためだけ**に持つ（サーバーの値を取り直す口は無い）。
    *  無い版で保存された古い値もそのまま読めるように任意にする。 */
   buyer_note?: string;
+  /** 0158: 応募した抽選の控え（key・名前・種類・当選時の個数）。結果は持たない＝結果は毎回
+   *  `get_my_reservation` で読む。サーバーが読めないときに「抽選待ち」として見せるためだけの写し。
+   *  無い版で保存された古い値もそのまま読めるように任意にする。 */
+  lottery?: SavedLotteryEntry[];
   savedAt: number; // epoch ms
   /** 保存から TTL を超えている（＝別イベントの使い回しかもしれない）。表示はするが注記を添える。 */
   stale?: boolean;
+}
+
+export interface SavedLotteryEntry {
+  key: string;
+  name: string;
+  kind: LotteryKind;
+  qty: number;
 }
 
 export function saveLastReservation(
@@ -26,6 +37,7 @@ export function saveLastReservation(
   result: CreateReservationResult,
   items: ReservedItem[],
   buyerNote?: string,
+  lottery?: SavedLotteryEntry[],
 ): void {
   try {
     const data: SavedReservation = {
@@ -34,6 +46,7 @@ export function saveLastReservation(
       items,
       // 空文字は入れない（`buyer_note` が無い＝備考なし、で表現を1つに保つ＝api.ts と同じ扱い）。
       ...(buyerNote && buyerNote.trim() ? { buyer_note: buyerNote } : {}),
+      ...(lottery && lottery.length > 0 ? { lottery } : {}),
       savedAt: Date.now(),
     };
     localStorage.setItem(PREFIX + slug, JSON.stringify(data));
@@ -53,6 +66,16 @@ export function loadLastReservation(slug: string): SavedReservation | null {
     }
     // 0113: 備考は任意。**型が違えば黙って捨てる**（復元の失敗で受取番号ごと消さない）。
     if (typeof v.buyer_note !== 'string') delete v.buyer_note;
+    // 0158: 抽選の控えも任意。形が崩れた要素だけ捨てる（受取番号ごと消さない）。
+    if (Array.isArray(v.lottery)) {
+      v.lottery = v.lottery.filter(
+        (e): e is SavedLotteryEntry =>
+          !!e && typeof e === 'object' && typeof e.key === 'string' && typeof e.name === 'string'
+          && (e.kind === 'purchase' || e.kind === 'bonus') && typeof e.qty === 'number',
+      );
+    } else {
+      delete v.lottery;
+    }
     // 🔴 Rev84（ラウンド16・班E 注意6／CLOCK-TRUST）: 旧実装は TTL 超過で**消していた**。
     //   savedAt は買い手端末の時計で打っており、時計が狂っている（あるいは手動で進めた）だけで
     //   当日ブースの前で受取番号が消える。買い手は番号を提示できず、取り消しボタンも
@@ -65,6 +88,20 @@ export function loadLastReservation(slug: string): SavedReservation | null {
     return { ...(v as SavedReservation), savedAt, stale };
   } catch {
     return null;
+  }
+}
+
+/** 0158: 個数を直したあと、控えの内訳だけを最新に差し替える（受取番号・保存時刻・備考・抽選の控えはそのまま）。
+ *  保存時刻を動かさない＝TTL の注記（別イベントの使い回し検出）は最初の予約の時刻で判断し続ける。 */
+export function updateLastReservationItems(slug: string, items: ReservedItem[]): void {
+  try {
+    const raw = localStorage.getItem(PREFIX + slug);
+    if (!raw) return;
+    const v = JSON.parse(raw) as Partial<SavedReservation> | null;
+    if (!v || typeof v !== 'object') return;
+    localStorage.setItem(PREFIX + slug, JSON.stringify({ ...v, items }));
+  } catch {
+    // 保存できない環境では画面の表示だけが新しくなる（次に開いたときは get_my_reservation が最新を読む）。
   }
 }
 
